@@ -1,6 +1,6 @@
 # PerfBoost
 
-A performance optimization DLL for World of Warcraft 1.12.1 that provides advanced render distance controls to improve FPS in crowded areas.
+A performance optimization DLL for World of Warcraft 1.12.1 that provides advanced render distance controls to improve FPS in crowded areas and in raids.
 
 ## Features
 
@@ -91,4 +91,4 @@ The following CVars control the behavior of the spell queuing system:
 
 ## Legal
 
-This tool modifies game rendering behavior for performance optimization. Use at your own discretion and in compliance with your server's rules.
+This tool modifies game rendering behavior for performance optimization. Use at your own risk/discretion and in compliance with your server's rules.
