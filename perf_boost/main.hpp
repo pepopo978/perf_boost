@@ -158,4 +158,8 @@ namespace perf_boost {
                                               void *callbackPtr,
                                               int category, char unk2, int unk3);
 
+    using SendUnitSignalT = void (__fastcall *)(uint64_t *guid, uint32_t eventCode);
+    using GetNamesFromGUIDT = char** (__fastcall *)(uint64_t *guid, int *numNamesReturn);
+    using SignalEventParamSingleStringT = int (__cdecl *)(uint32_t eventCode, char *format, char *str);
+
 }

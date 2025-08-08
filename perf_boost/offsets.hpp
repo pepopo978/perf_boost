@@ -78,6 +78,10 @@ enum class Offsets : std::uint32_t {
     RegisterCVar = 0X0063DB90,
     Script_SetCVar = 0x00488C10,
 
+    SendUnitSignal = 0x00515e50,
+    GetNamesFromGUID = 0x00515c50,
+    SignalEventParam = 0x703F50,
+
     RealZoneText = 0X0B4B404,
     ZoneAreaIds = 0X0B4E314,
 };

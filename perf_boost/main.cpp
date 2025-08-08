@@ -72,6 +72,7 @@ namespace perf_boost {
     int trashUnitRenderDistInCombat;
     int corpseRenderDist;
     bool alwaysRenderRaidMarks;
+    bool filterGuidEvents;
 
     uint32_t GetTime() {
         return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -324,6 +325,33 @@ namespace perf_boost {
         return true; // default to true if renderDist is negative
     }
 
+    void SendUnitSignalHook(hadesmem::PatchDetourBase *detour, uint64_t *guid, uint32_t eventCode) {
+        if (guid && *guid != 0) {
+            auto const GetNamesFromGUID = reinterpret_cast<GetNamesFromGUIDT>(Offsets::GetNamesFromGUID);
+            auto const SignalEventParam = reinterpret_cast<SignalEventParamSingleStringT>(Offsets::SignalEventParam);
+            
+            int numNames = 0;
+            char **names = GetNamesFromGUID(guid, &numNames);
+
+            if (names && numNames > 0) {
+                char format[] = "%s";
+                
+                for (int i = 0; i < numNames; i++) {
+                    if (names[i]) {
+                        // check if names starts with 0x (raw guids from super wow)
+                        // don't trigger with guid for any event codes below 182 (UNIT_COMBAT)
+                        // don't trigger for 183(UNIT_NAME_UPDATE), 184(UNIT_PORTRAIT_UPDATE), 186(UNIT_INVENTORY_CHANGED), 345(PLAYER_GUILD_UPDATE)
+                        // this turns off UNIT_AURA, UNIT_HEALTH, UNIT_MANA spam for guids
+                        if (filterGuidEvents && strncmp(names[i], "0x", 2) == 0 && (eventCode < 182 || eventCode == 183 || eventCode == 184 || eventCode == 186 || eventCode == 345)) {
+                            continue;
+                        }
+                        SignalEventParam(eventCode, format, names[i]);
+                    }
+                }
+            }
+        }
+    }
+
     uint32_t
     CGUnitShouldRenderHook(hadesmem::PatchDetourBase *detour, uintptr_t *unitPtr, void *dummy_edx, uint32_t param_1) {
         auto const CGUnitShouldRender = detour->GetTrampolineT<CGUnitShouldRenderT>();
@@ -425,6 +453,9 @@ namespace perf_boost {
         } else if (strcmp(cvar, "PB_AlwaysRenderRaidMarks") == 0) {
             alwaysRenderRaidMarks = atoi(value) != 0;
             DEBUG_LOG("Set PB_AlwaysRenderRaidMarks to " << alwaysRenderRaidMarks);
+        } else if (strcmp(cvar, "PB_FilterGuidEvents") == 0) {
+            filterGuidEvents = atoi(value) != 0;
+            DEBUG_LOG("Set PB_FilterGuidEvents to " << filterGuidEvents);
         }
     }
 
@@ -484,6 +515,9 @@ namespace perf_boost {
         initializeHook<CGUnitPreAnimateT>(process, Offsets::CGUnitPreAnimate, &CGUnitPreAnimateHook);
         initializeHook<CGUnitAnimateT>(process, Offsets::CGUnitAnimate, &CGUnitAnimateHook);
         initializeHook<CGUnitShouldRenderT>(process, Offsets::CGUnitShouldRender, &CGUnitShouldRenderHook);
+        
+        // Hook SendUnitSignal
+        initializeHook<SendUnitSignalT>(process, Offsets::SendUnitSignal, &SendUnitSignalHook);
     }
 
     void loadConfig() {
@@ -621,6 +655,17 @@ namespace perf_boost {
                      0,  // unk2
                      0); // unk3
 
+        // Whether to filter GUID events
+        char PB_FilterGuidEvents[] = "PB_FilterGuidEvents";
+        CVarRegister(PB_FilterGuidEvents, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEnabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
 
         loadUserVar("PB_PlayerRenderDist");
         loadUserVar("PB_PlayerRenderDistInCities");
@@ -632,6 +677,7 @@ namespace perf_boost {
         loadUserVar("PB_CorpseRenderDist");
         loadUserVar("PB_Enabled");
         loadUserVar("PB_AlwaysRenderRaidMarks");
+        loadUserVar("PB_FilterGuidEvents");
     }
 
     void SpellVisualsInitializeHook(hadesmem::PatchDetourBase *detour) {

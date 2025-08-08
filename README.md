@@ -89,6 +89,13 @@ The following CVars control the behavior of the spell queuing system:
 - **Description**: Always render units with raid markers (skull, cross, etc.) regardless of distance settings
 - **Values**: `1` = enabled, `0` = disabled
 
+### Event Filtering
+
+#### `PB_FilterGuidEvents`
+- **Default**: `1` (enabled)
+- **Description**: Filters out generally unnecessary GUID-based events to reduce event spam and improve performance. Blocks events like UNIT_AURA, UNIT_HEALTH, UNIT_MANA when triggered with a guid instead of a string like 'player' or 'raid1', while preserving important events like UNIT_COMBAT and UNIT_MODEL_CHANGED.
+- **Values**: `1` = enabled, `0` = disabled
+
 ## Legal
 
 This tool modifies game rendering behavior for performance optimization. Use at your own risk/discretion and in compliance with your server's rules.
