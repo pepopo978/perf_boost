@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char* VERSION = "1.0.0";
+    const char* VERSION = "1.0.1";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
