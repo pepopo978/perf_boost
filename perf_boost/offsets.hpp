@@ -38,6 +38,7 @@ enum class Offsets : std::uint32_t {
     GetObjectPtr = 0x464870,
     GetActivePlayer = 0x468550,
     GetUnitFromName = 0x00515940,
+    GetGUIDFromName = 0x00515970,
 
     SpellVisualsInitialize = 0X006EC0E0,
     OnWorldRender = 0x00483460,

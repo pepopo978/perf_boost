@@ -18,6 +18,9 @@
 #include <thread>
 #include <iostream>
 #include <fstream>
+#include <string>
+#include <vector>
+#include <algorithm>
 
 namespace perf_boost {
     typedef struct C3Vector {
@@ -89,6 +92,40 @@ namespace perf_boost {
     using LuaScriptT = uint32_t (__fastcall *)(uintptr_t *luaState);
     using GetGUIDFromNameT = std::uint64_t (__fastcall *)(const char *);
     using GetUnitFromNameT = uintptr_t * (__fastcall *)(const char *);
+    
+    struct AlwaysRenderPlayer {
+        char* name;
+        std::uint64_t guid;
+        bool resolved;
+        
+        AlwaysRenderPlayer(const char* playerName) : guid(0), resolved(false) {
+            size_t len = strlen(playerName) + 1;
+            name = new char[len];
+            strcpy(name, playerName);
+        }
+        
+        ~AlwaysRenderPlayer() {
+            delete[] name;
+        }
+        
+        AlwaysRenderPlayer(const AlwaysRenderPlayer& other) : guid(other.guid), resolved(other.resolved) {
+            size_t len = strlen(other.name) + 1;
+            name = new char[len];
+            strcpy(name, other.name);
+        }
+        
+        AlwaysRenderPlayer& operator=(const AlwaysRenderPlayer& other) {
+            if (this != &other) {
+                delete[] name;
+                size_t len = strlen(other.name) + 1;
+                name = new char[len];
+                strcpy(name, other.name);
+                guid = other.guid;
+                resolved = other.resolved;
+            }
+            return *this;
+        }
+    };
     using lua_gettableT = void (__fastcall *)(uintptr_t *luaState, int globalsIndex);
     using lua_isstringT = bool (__fastcall *)(uintptr_t *, int);
     using lua_isnumberT = bool (__fastcall *)(uintptr_t *, int);
@@ -149,7 +186,7 @@ namespace perf_boost {
     using CGCorpseShouldRenderT = uint32_t (__fastcall *)(uintptr_t *this_ptr, void *dummy_edx, uint32_t param_1);
     using CGUnitGetPositionT = C3Vector *(__thiscall *)(uintptr_t *this_ptr, C3Vector* param_1);
 
-    using CGUnitGetNameT = char * (__thiscall *)(uintptr_t *this_ptr);
+    using CGUnitGetNameT = char * (__thiscall *)(uintptr_t *this_ptr, uint32_t flag);
     using CGUnitCanAttackT = bool * (__thiscall *)(uintptr_t *this_ptr, uintptr_t *unit);
 
     using CVarLookupT = uintptr_t *(__fastcall *)(const char *);

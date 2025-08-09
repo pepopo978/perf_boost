@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char* VERSION = "1.0.1";
+    const char *VERSION = "1.1.0";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -74,6 +74,18 @@ namespace perf_boost {
     bool alwaysRenderRaidMarks;
     bool filterGuidEvents;
 
+    std::vector<AlwaysRenderPlayer> unresolvedPlayers;
+    std::vector<AlwaysRenderPlayer> alwaysRenderPlayersToCheck;
+    std::vector<AlwaysRenderPlayer> resolvedPlayers;
+    std::string alwaysRenderPlayersString;
+    uint64_t lastOfflineCheckTime = 0;
+    
+    std::vector<AlwaysRenderPlayer> neverRenderUnresolvedPlayers;
+    std::vector<AlwaysRenderPlayer> neverRenderPlayersToCheck;
+    std::vector<AlwaysRenderPlayer> neverRenderResolvedPlayers;
+    std::string neverRenderPlayersString;
+    uint64_t neverRenderLastOfflineCheckTime = 0;
+
     uint32_t GetTime() {
         return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::high_resolution_clock::now().time_since_epoch()).count()) - gStartTime;
@@ -93,17 +105,17 @@ namespace perf_boost {
     float fastApproxDistance(C3Vector &vec) {
         // Manhattan distance (fastest, ~2-3x error)
         // return std::abs(vec.x) + std::abs(vec.y) + std::abs(vec.z);
-        
+
         // Octagonal approximation (fast, ~8% max error)
         float ax = std::abs(vec.x);
         float ay = std::abs(vec.y);
         float az = std::abs(vec.z);
-        
+
         // Sort components so ax >= ay >= az
         if (ax < ay) std::swap(ax, ay);
         if (ay < az) std::swap(ay, az);
         if (ax < ay) std::swap(ax, ay);
-        
+
         // Approximation: largest + 0.5*middle + 0.25*smallest
         return ax + 0.5f * ay + 0.25f * az;
     }
@@ -118,8 +130,8 @@ namespace perf_boost {
 
     bool IsPlayerInCity() {
         // Get current area ID from memory
-        uint32_t areaId = *reinterpret_cast<uint32_t*>(Offsets::ZoneAreaIds);
-        
+        uint32_t areaId = *reinterpret_cast<uint32_t *>(Offsets::ZoneAreaIds);
+
         // Major city area IDs for WoW 1.12.1
         switch (areaId) {
             case 1537: // Ironforge
@@ -142,7 +154,7 @@ namespace perf_boost {
         }
 
         for (int result = 0; result < 8; ++result) {
-            if (*reinterpret_cast<uint64_t*>(0xb71368 + result * 8) == targetGUID) {
+            if (*reinterpret_cast<uint64_t *>(0xb71368 + result * 8) == targetGUID) {
                 return result + 1;
             }
         }
@@ -233,7 +245,7 @@ namespace perf_boost {
             return -1;
         }
 
-        uint32_t data = *reinterpret_cast<uint32_t*>(attr + 0xa0);
+        uint32_t data = *reinterpret_cast<uint32_t *>(attr + 0xa0);
         if ((data & 8) != 0) {
             return true;
         } else {
@@ -288,6 +300,148 @@ namespace perf_boost {
         return clntObjMgrObjectPtr(typeMask, nullptr, guid, 0);
     }
 
+    char *UnitGetName(uintptr_t *unit) {
+        if (!unit) {
+            return nullptr;
+        }
+
+        auto const GetUnitName = reinterpret_cast<CGUnitGetNameT>(Offsets::CGUnitGetUnitName);
+        return GetUnitName(unit, 0);
+    }
+
+    void parseAlwaysRenderPlayers(const std::string &value) {
+        unresolvedPlayers.clear();
+        alwaysRenderPlayersToCheck.clear();
+        resolvedPlayers.clear();
+        alwaysRenderPlayersString = value;
+        lastOfflineCheckTime = 0;
+
+        if (value.empty()) {
+            DEBUG_LOG("AlwaysRenderPlayers list cleared");
+            return;
+        }
+
+        std::stringstream ss(value);
+        std::string playerName;
+
+        while (std::getline(ss, playerName, ',')) {
+            playerName.erase(0, playerName.find_first_not_of(" \t"));
+            playerName.erase(playerName.find_last_not_of(" \t") + 1);
+
+            if (!playerName.empty()) {
+                unresolvedPlayers.emplace_back(playerName.c_str());
+                DEBUG_LOG("Added player to unresolvedPlayers: " << playerName.c_str());
+            }
+        }
+    }
+
+    void parseNeverRenderPlayers(const std::string &value) {
+        neverRenderUnresolvedPlayers.clear();
+        neverRenderPlayersToCheck.clear();
+        neverRenderResolvedPlayers.clear();
+        neverRenderPlayersString = value;
+        neverRenderLastOfflineCheckTime = 0;
+
+        if (value.empty()) {
+            DEBUG_LOG("NeverRenderPlayers list cleared");
+            return;
+        }
+
+        std::stringstream ss(value);
+        std::string playerName;
+
+        while (std::getline(ss, playerName, ',')) {
+            playerName.erase(0, playerName.find_first_not_of(" \t"));
+            playerName.erase(playerName.find_last_not_of(" \t") + 1);
+
+            if (!playerName.empty()) {
+                neverRenderUnresolvedPlayers.emplace_back(playerName.c_str());
+                DEBUG_LOG("Added player to neverRenderUnresolvedPlayers: " << playerName.c_str());
+            }
+        }
+    }
+
+    bool shouldAlwaysRenderPlayer(uintptr_t *unitPtr, uint64_t unitGuid) {
+        // Check resolved players first (fastest lookup)
+        for (const auto &player: resolvedPlayers) {
+            if (player.guid == unitGuid) {
+                return true;
+            }
+        }
+
+        // Check alwaysRenderPlayersToCheck and try to resolve them
+        if (!alwaysRenderPlayersToCheck.empty()) {
+            char *unitName = UnitGetName(unitPtr);
+            if (unitName) {
+                auto it = alwaysRenderPlayersToCheck.begin();
+                while (it != alwaysRenderPlayersToCheck.end()) {
+                    if (strcmp(it->name, unitName) == 0) {
+                        // Found match, move to resolved players
+                        AlwaysRenderPlayer resolvedPlayer = *it;
+                        resolvedPlayer.guid = unitGuid;
+                        resolvedPlayer.resolved = true;
+                        resolvedPlayers.push_back(resolvedPlayer);
+                        
+                        // Remove from alwaysRenderPlayersToCheck and unresolvedPlayers
+                        alwaysRenderPlayersToCheck.erase(it);
+                        auto unresolvedIt = std::find_if(unresolvedPlayers.begin(), unresolvedPlayers.end(),
+                            [&](const AlwaysRenderPlayer& p) { return strcmp(p.name, unitName) == 0; });
+                        if (unresolvedIt != unresolvedPlayers.end()) {
+                            unresolvedPlayers.erase(unresolvedIt);
+                        }
+                        
+                        DEBUG_LOG("Resolved player " << unitName << " with GUID: " << std::hex << unitGuid);
+                        return true;
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool shouldNeverRenderPlayer(uintptr_t *unitPtr, uint64_t unitGuid) {
+        // Check resolved players first (fastest lookup)
+        for (const auto &player: neverRenderResolvedPlayers) {
+            if (player.guid == unitGuid) {
+                return true; // Found in blacklist, never render
+            }
+        }
+
+        // Check neverRenderPlayersToCheck and try to resolve them
+        if (!neverRenderPlayersToCheck.empty()) {
+            char *unitName = UnitGetName(unitPtr);
+            if (unitName) {
+                auto it = neverRenderPlayersToCheck.begin();
+                while (it != neverRenderPlayersToCheck.end()) {
+                    if (strcmp(it->name, unitName) == 0) {
+                        // Found match, move to resolved players
+                        AlwaysRenderPlayer resolvedPlayer = *it;
+                        resolvedPlayer.guid = unitGuid;
+                        resolvedPlayer.resolved = true;
+                        neverRenderResolvedPlayers.push_back(resolvedPlayer);
+                        
+                        // Remove from neverRenderPlayersToCheck and neverRenderUnresolvedPlayers
+                        neverRenderPlayersToCheck.erase(it);
+                        auto unresolvedIt = std::find_if(neverRenderUnresolvedPlayers.begin(), neverRenderUnresolvedPlayers.end(),
+                            [&](const AlwaysRenderPlayer& p) { return strcmp(p.name, unitName) == 0; });
+                        if (unresolvedIt != neverRenderUnresolvedPlayers.end()) {
+                            neverRenderUnresolvedPlayers.erase(unresolvedIt);
+                        }
+                        
+                        DEBUG_LOG("Resolved never-render player " << unitName << " with GUID: " << std::hex << unitGuid);
+                        return true; // Found in blacklist, never render
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+        }
+
+        return false; // Not in blacklist, allow rendering
+    }
 
     void OnWorldRenderHook(hadesmem::PatchDetourBase *detour, uintptr_t *worldFrame) {
         // store player data once before ShouldRender is called
@@ -301,8 +455,40 @@ namespace perf_boost {
             }
         }
 
+        uint64_t currentTime = GetWowTimeMs();
+
+        // Every 60 seconds: move unresolved players to alwaysRenderPlayersToCheck if there are any
+        if (gPlayerUnit && !unresolvedPlayers.empty() && (currentTime - lastOfflineCheckTime) > 60000) {
+            alwaysRenderPlayersToCheck.insert(alwaysRenderPlayersToCheck.end(), unresolvedPlayers.begin(), unresolvedPlayers.end());
+            DEBUG_LOG("Moved " << unresolvedPlayers.size() << " unresolved players to alwaysRenderPlayersToCheck");
+            unresolvedPlayers.clear();
+            lastOfflineCheckTime = currentTime;
+        }
+
+        // Every 60 seconds: move neverRender unresolved players to neverRenderPlayersToCheck if there are any
+        if (gPlayerUnit && !neverRenderUnresolvedPlayers.empty() && (currentTime - neverRenderLastOfflineCheckTime) > 60000) {
+            neverRenderPlayersToCheck.insert(neverRenderPlayersToCheck.end(), neverRenderUnresolvedPlayers.begin(), neverRenderUnresolvedPlayers.end());
+            DEBUG_LOG("Moved " << neverRenderUnresolvedPlayers.size() << " neverRender unresolved players to neverRenderPlayersToCheck");
+            neverRenderUnresolvedPlayers.clear();
+            neverRenderLastOfflineCheckTime = currentTime;
+        }
+
         auto const OnWorldRender = detour->GetTrampolineT<FastcallFrameT>();
         OnWorldRender(worldFrame);
+
+        if (!alwaysRenderPlayersToCheck.empty()) {
+            // move any remaining players from alwaysRenderPlayersToCheck back to unresolvedPlayers
+            unresolvedPlayers.insert(unresolvedPlayers.end(), alwaysRenderPlayersToCheck.begin(), alwaysRenderPlayersToCheck.end());
+            DEBUG_LOG("Moved " << alwaysRenderPlayersToCheck.size() << " players back to unresolvedPlayers");
+            alwaysRenderPlayersToCheck.clear();
+        }
+
+        if (!neverRenderPlayersToCheck.empty()) {
+            // move any remaining neverRender players from neverRenderPlayersToCheck back to neverRenderUnresolvedPlayers
+            neverRenderUnresolvedPlayers.insert(neverRenderUnresolvedPlayers.end(), neverRenderPlayersToCheck.begin(), neverRenderPlayersToCheck.end());
+            DEBUG_LOG("Moved " << neverRenderPlayersToCheck.size() << " neverRender players back to neverRenderUnresolvedPlayers");
+            neverRenderPlayersToCheck.clear();
+        }
     }
 
     void CGUnitPreAnimateHook(hadesmem::PatchDetourBase *detour, uintptr_t *this_ptr, void *dummy_edx, void *param_1) {
@@ -329,20 +515,22 @@ namespace perf_boost {
         if (guid && *guid != 0) {
             auto const GetNamesFromGUID = reinterpret_cast<GetNamesFromGUIDT>(Offsets::GetNamesFromGUID);
             auto const SignalEventParam = reinterpret_cast<SignalEventParamSingleStringT>(Offsets::SignalEventParam);
-            
+
             int numNames = 0;
             char **names = GetNamesFromGUID(guid, &numNames);
 
             if (names && numNames > 0) {
                 char format[] = "%s";
-                
+
                 for (int i = 0; i < numNames; i++) {
                     if (names[i]) {
                         // check if names starts with 0x (raw guids from super wow)
                         // don't trigger with guid for any event codes below 182 (UNIT_COMBAT)
                         // don't trigger for 183(UNIT_NAME_UPDATE), 184(UNIT_PORTRAIT_UPDATE), 186(UNIT_INVENTORY_CHANGED), 345(PLAYER_GUILD_UPDATE)
                         // this turns off UNIT_AURA, UNIT_HEALTH, UNIT_MANA spam for guids
-                        if (filterGuidEvents && strncmp(names[i], "0x", 2) == 0 && (eventCode < 182 || eventCode == 183 || eventCode == 184 || eventCode == 186 || eventCode == 345)) {
+                        if (filterGuidEvents && strncmp(names[i], "0x", 2) == 0 &&
+                            (eventCode < 182 || eventCode == 183 || eventCode == 184 || eventCode == 186 ||
+                             eventCode == 345)) {
                             continue;
                         }
                         SignalEventParam(eventCode, format, names[i]);
@@ -363,16 +551,28 @@ namespace perf_boost {
             if (unitPtr != gPlayerUnit) {
                 auto unitType = UnitGetType(unitPtr);
                 if (unitType == OBJECT_TYPE_PLAYER) {
-                    if (alwaysRenderRaidMarks){
-                        auto raidMark = GetRaidMarkForGuid(UnitGetGuid(unitPtr));
+                    auto unitGuid = UnitGetGuid(unitPtr);
+                    if (alwaysRenderRaidMarks) {
+                        auto raidMark = GetRaidMarkForGuid(unitGuid);
 
                         if (raidMark > 0) {
                             // always render players with raid marks
                             return result;
                         }
                     }
+
+                    // check if this player is in NeverRenderPlayers blacklist
+                    if (shouldNeverRenderPlayer(unitPtr, unitGuid)) {
+                        return 0; // Force hide this player
+                    }
+
                     // always show pvp/mc players
                     if (UnitCanAttackUnit(gPlayerUnit, unitPtr)) {
+                        return result;
+                    }
+
+                    // check if this player is in AlwaysRenderPlayers list
+                    if (shouldAlwaysRenderPlayer(unitPtr, unitGuid)) {
                         return result;
                     }
 
@@ -386,7 +586,7 @@ namespace perf_boost {
                     }
                     return ShouldRenderBasedOnDistance(unitPtr, renderDist);
                 } else if (unitType == OBJECT_TYPE_UNIT) {
-                    if (alwaysRenderRaidMarks){
+                    if (alwaysRenderRaidMarks) {
                         auto raidMark = GetRaidMarkForGuid(UnitGetGuid(unitPtr));
 
                         if (raidMark > 0) {
@@ -403,13 +603,15 @@ namespace perf_boost {
                     } else {
                         // Check if it's a pet (controlled by player)
                         if (UnitIsControlledByPlayer(unitPtr)) {
-                            int renderDist = (gPlayerInCombat && petRenderDistInCombat != -1) ? petRenderDistInCombat : petRenderDist;
+                            int renderDist = (gPlayerInCombat && petRenderDistInCombat != -1) ? petRenderDistInCombat
+                                                                                              : petRenderDist;
                             return ShouldRenderBasedOnDistance(unitPtr, renderDist);
                         }
-                        
+
                         auto unitLevel = UnitGetLevel(unitPtr);
                         if (unitLevel < 63) {
-                            int renderDist = (gPlayerInCombat && trashUnitRenderDistInCombat != -1) ? trashUnitRenderDistInCombat : trashUnitRenderDist;
+                            int renderDist = (gPlayerInCombat && trashUnitRenderDistInCombat != -1)
+                                             ? trashUnitRenderDistInCombat : trashUnitRenderDist;
                             return ShouldRenderBasedOnDistance(unitPtr, renderDist);
                         }
                     }
@@ -456,6 +658,10 @@ namespace perf_boost {
         } else if (strcmp(cvar, "PB_FilterGuidEvents") == 0) {
             filterGuidEvents = atoi(value) != 0;
             DEBUG_LOG("Set PB_FilterGuidEvents to " << filterGuidEvents);
+        } else if (strcmp(cvar, "PB_AlwaysRenderPlayers") == 0) {
+            parseAlwaysRenderPlayers(value);
+        } else if (strcmp(cvar, "PB_NeverRenderPlayers") == 0) {
+            parseNeverRenderPlayers(value);
         }
     }
 
@@ -487,12 +693,36 @@ namespace perf_boost {
         return nullptr;
     }
 
+    char* getCvarString(const char *cvar) {
+        auto const cvarLookup = hadesmem::detail::AliasCast<CVarLookupT>(Offsets::CVarLookup);
+        uintptr_t *cvarPtr = cvarLookup(cvar);
+
+        if (cvarPtr) {
+            // Get strValue from CVar
+            char **strValuePtr = reinterpret_cast<char**>(cvarPtr + 8);
+            return *strValuePtr;
+        }
+        return nullptr;
+    }
+
     void loadUserVar(const char *cvar) {
-        int *value = getCvar(cvar);
-        if (value) {
-            updateFromCvar(cvar, std::to_string(*value).c_str());
+        // Handle string cvars specially
+        if (strcmp(cvar, "PB_AlwaysRenderPlayers") == 0 || strcmp(cvar, "PB_NeverRenderPlayers") == 0) {
+            char* stringValue = getCvarString(cvar);
+            if (stringValue) {
+                updateFromCvar(cvar, stringValue);
+            } else {
+                DEBUG_LOG("Using default empty string for " << cvar);
+                updateFromCvar(cvar, "");
+            }
         } else {
-            DEBUG_LOG("Using default value for " << cvar);
+            // Handle integer cvars as before
+            int *value = getCvar(cvar);
+            if (value) {
+                updateFromCvar(cvar, std::to_string(*value).c_str());
+            } else {
+                DEBUG_LOG("Using default value for " << cvar);
+            }
         }
     }
 
@@ -515,7 +745,7 @@ namespace perf_boost {
         initializeHook<CGUnitPreAnimateT>(process, Offsets::CGUnitPreAnimate, &CGUnitPreAnimateHook);
         initializeHook<CGUnitAnimateT>(process, Offsets::CGUnitAnimate, &CGUnitAnimateHook);
         initializeHook<CGUnitShouldRenderT>(process, Offsets::CGUnitShouldRender, &CGUnitShouldRenderHook);
-        
+
         // Hook SendUnitSignal
         initializeHook<SendUnitSignalT>(process, Offsets::SendUnitSignal, &SendUnitSignalHook);
     }
@@ -666,6 +896,29 @@ namespace perf_boost {
                      0,  // unk2
                      0); // unk3
 
+        // Comma separated list of player names to always render
+        char defaultEmpty[] = "";
+        char PB_AlwaysRenderPlayers[] = "PB_AlwaysRenderPlayers";
+        CVarRegister(PB_AlwaysRenderPlayers, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEmpty, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Comma separated list of player names to never render (blacklist)
+        char PB_NeverRenderPlayers[] = "PB_NeverRenderPlayers";
+        CVarRegister(PB_NeverRenderPlayers, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEmpty, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
 
         loadUserVar("PB_PlayerRenderDist");
         loadUserVar("PB_PlayerRenderDistInCities");
@@ -678,6 +931,8 @@ namespace perf_boost {
         loadUserVar("PB_Enabled");
         loadUserVar("PB_AlwaysRenderRaidMarks");
         loadUserVar("PB_FilterGuidEvents");
+        loadUserVar("PB_AlwaysRenderPlayers");
+        loadUserVar("PB_NeverRenderPlayers");
     }
 
     void SpellVisualsInitializeHook(hadesmem::PatchDetourBase *detour) {
