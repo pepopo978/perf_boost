@@ -2,6 +2,9 @@
 
 A performance optimization DLL for World of Warcraft 1.12.1 that provides advanced render distance controls to improve FPS in crowded areas and in raids.
 
+# Companion addon
+https://github.com/pepopo978/PerfBoostSettings
+
 ## Features
 
 - **Selective Unit Rendering**: Control render distances for different types of units (players, pets, trash mobs, corpses)
