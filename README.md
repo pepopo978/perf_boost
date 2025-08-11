@@ -22,82 +22,10 @@ If you would prefer to compile yourself you will need to get:
 
 CMakeLists.txt is currently looking for boost at `set(BOOST_INCLUDEDIR "C:/software/boost_1_80_0")` and hadesmem at `set(HADESMEM_ROOT "C:/software/hadesmem-v142-Debug-Win32")`.  Edit as needed.
 
-### Configuration
-
 #### Configure with addon
 There is a companion addon to make it easy to check/change the settings in game.  You can download it here - https://github.com/pepopo978/PerfBoostSettings
 
-#### Manual Configuration
-The following CVars control the behavior of the spell queuing system:
-
-### Core Settings
-
-#### `PB_Enabled`
-- **Default**: `1` (enabled)
-- **Description**: Master switch to enable/disable all performance boost features
-- **Values**: `1` = enabled, `0` = disabled
-
-### Player Render Distance
-
-#### `PB_PlayerRenderDist`
-- **Default**: `-1` (disabled)
-- **Description**: Maximum distance to render other players when not in combat
-- **Values**: Distance in yards, `-1` = no limit, `0` = hide all players
-
-#### `PB_PlayerRenderDistInCities`
-- **Default**: `-1` (disabled)
-- **Description**: Override player render distance when in major cities (Stormwind, Orgrimmar, Ironforge, Undercity, Darnassus, Thunder Bluff)
-- **Values**: Distance in yards, `-1` = use normal distance
-
-#### `PB_PlayerRenderDistInCombat`
-- **Default**: `-1` (disabled)
-- **Description**: Override player render distance when in combat
-- **Values**: Distance in yards, `-1` = use normal distance
-
-### Pet Render Distance
-
-#### `PB_PetRenderDist`
-- **Default**: `-1` (disabled)
-- **Description**: Maximum distance to render pets, totems, and other player-controlled units
-- **Values**: Distance in yards, `-1` = no limit
-
-#### `PB_PetRenderDistInCombat`
-- **Default**: `-1` (disabled)
-- **Description**: Override pet render distance when in combat
-- **Values**: Distance in yards, `-1` = use normal distance
-
-### NPC Render Distance
-
-#### `PB_TrashUnitRenderDist`
-- **Default**: `-1` (disabled)
-- **Description**: Maximum distance to render low-level NPCs (level < 63)
-- **Values**: Distance in yards, `-1` = no limit
-
-#### `PB_TrashUnitRenderDistInCombat`
-- **Default**: `-1` (disabled)
-- **Description**: Override trash unit render distance when in combat
-- **Values**: Distance in yards, `-1` = use normal distance
-
-### Corpse Render Distance
-
-#### `PB_CorpseRenderDist`
-- **Default**: `-1` (disabled)
-- **Description**: Maximum distance to render corpses
-- **Values**: Distance in yards, `-1` = no limit
-
-### Special Rendering
-
-#### `PB_AlwaysRenderRaidMarks`
-- **Default**: `1` (enabled)
-- **Description**: Always render units with raid markers (skull, cross, etc.) regardless of distance settings
-- **Values**: `1` = enabled, `0` = disabled
-
-### Event Filtering
-
-#### `PB_FilterGuidEvents`
-- **Default**: `1` (enabled)
-- **Description**: Filters out generally unnecessary GUID-based events to reduce event spam and improve performance. Blocks events like UNIT_AURA, UNIT_HEALTH, UNIT_MANA when triggered with a guid instead of a string like 'player' or 'raid1', while preserving important events like UNIT_COMBAT and UNIT_MODEL_CHANGED.
-- **Values**: `1` = enabled, `0` = disabled
+See the readme at https://github.com/pepopo978/PerfBoostSettings for descriptions of the cvars.
 
 ## Legal
 

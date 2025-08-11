@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char *VERSION = "1.1.0";
+    const char *VERSION = "1.2.0";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -68,10 +68,13 @@ namespace perf_boost {
     int playerRenderDistInCombat;
     int petRenderDist;
     int petRenderDistInCombat;
+    int summonRenderDist;
+    int summonRenderDistInCombat;
     int trashUnitRenderDist;
     int trashUnitRenderDistInCombat;
     int corpseRenderDist;
     bool alwaysRenderRaidMarks;
+    bool hideAllPlayers;
     bool filterGuidEvents;
 
     std::vector<AlwaysRenderPlayer> unresolvedPlayers;
@@ -79,7 +82,7 @@ namespace perf_boost {
     std::vector<AlwaysRenderPlayer> resolvedPlayers;
     std::string alwaysRenderPlayersString;
     uint64_t lastOfflineCheckTime = 0;
-    
+
     std::vector<AlwaysRenderPlayer> neverRenderUnresolvedPlayers;
     std::vector<AlwaysRenderPlayer> neverRenderPlayersToCheck;
     std::vector<AlwaysRenderPlayer> neverRenderResolvedPlayers;
@@ -189,21 +192,6 @@ namespace perf_boost {
         return *reinterpret_cast<OBJECT_TYPE_ID *>(unit + 5);
     }
 
-    uint32_t UnitGetLevel(uintptr_t *unit) {
-        if (!unit) {
-            return false;
-        }
-
-        uint32_t attr = *reinterpret_cast<uintptr_t *>(unit + 68);
-        if (attr == 0 || (attr & 1) != 0) {
-            // we don't have attribute info.
-            return -1;
-        }
-
-        uint32_t level = *reinterpret_cast<uint32_t *>(attr + 0x70);
-        return level;
-    }
-
     uint64_t UnitGetGuid(uintptr_t *unit) {
         if (!unit) {
             return 0;
@@ -213,21 +201,38 @@ namespace perf_boost {
         return guid;
     }
 
+
+    uint32_t UnitGetLevel(uintptr_t *unit) {
+        if (!unit) {
+            return false;
+        }
+
+        auto *unitFields = *reinterpret_cast<UnitFields **>(unit + 68);
+
+        if (unitFields == nullptr) {
+            // we don't have attribute info.
+            return -1;
+        }
+
+        return unitFields->level;
+    }
+
     bool UnitIsDead(uintptr_t *unit) {
         if (!unit) {
             return false;
         }
 
-        uint32_t attr = *reinterpret_cast<uintptr_t *>(unit + 68);
-        if (attr == 0 || (attr & 1) != 0) {
+        auto *unitFields = *reinterpret_cast<UnitFields **>(unit + 68);
+
+        if (unitFields == nullptr) {
             // we don't have attribute info.
-            return -1;
+            return false;
         }
 
-        uint32_t flag0 = *reinterpret_cast<uint32_t *>(attr + 0x40);
-        uint32_t flag1 = *reinterpret_cast<uint32_t *>(attr + 0x224);
+        auto health = unitFields->health;
+        auto dynamicFlags = unitFields->dynamicFlags;
 
-        if (flag0 < 1 || (flag1 & 0x20) != 0) {
+        if (health < 1 || (dynamicFlags & 0x20) != 0) {
             return true;
         } else {
             return false;
@@ -239,14 +244,15 @@ namespace perf_boost {
             return false;
         }
 
-        uint32_t attr = *reinterpret_cast<uintptr_t *>(unit + 68);
-        if (attr == 0 || (attr & 1) != 0) {
+        auto *unitFields = *reinterpret_cast<UnitFields **>(unit + 68);
+        if (unitFields == nullptr) {
             // we don't have attribute info.
-            return -1;
+            return false;
         }
 
-        uint32_t data = *reinterpret_cast<uint32_t *>(attr + 0xa0);
-        if ((data & 8) != 0) {
+        auto flags = unitFields->flags;
+
+        if ((flags & UNIT_FLAG_PLAYER_CONTROLLED) != 0) {
             return true;
         } else {
             return false;
@@ -258,14 +264,15 @@ namespace perf_boost {
             return false;
         }
 
-        uint32_t attr = *reinterpret_cast<uintptr_t *>(unit + 68);
-        if (attr == 0 || (attr & 1) != 0) {
+        auto *unitFields = *reinterpret_cast<UnitFields **>(unit + 68);
+
+        if (unitFields == nullptr) {
             // we don't have attribute info.
-            return -1;
+            return false;
         }
 
-        uint32_t flags = *reinterpret_cast<uint32_t *>(attr + 0xa0);
-        if ((flags & 0x80000) != 0) {
+        auto flags = unitFields->flags;
+        if ((flags & UNIT_FLAG_IN_COMBAT) != 0) {
             return true;
         } else {
             return false;
@@ -381,15 +388,17 @@ namespace perf_boost {
                         resolvedPlayer.guid = unitGuid;
                         resolvedPlayer.resolved = true;
                         resolvedPlayers.push_back(resolvedPlayer);
-                        
+
                         // Remove from alwaysRenderPlayersToCheck and unresolvedPlayers
                         alwaysRenderPlayersToCheck.erase(it);
                         auto unresolvedIt = std::find_if(unresolvedPlayers.begin(), unresolvedPlayers.end(),
-                            [&](const AlwaysRenderPlayer& p) { return strcmp(p.name, unitName) == 0; });
+                                                         [&](const AlwaysRenderPlayer &p) {
+                                                             return strcmp(p.name, unitName) == 0;
+                                                         });
                         if (unresolvedIt != unresolvedPlayers.end()) {
                             unresolvedPlayers.erase(unresolvedIt);
                         }
-                        
+
                         DEBUG_LOG("Resolved player " << unitName << " with GUID: " << std::hex << unitGuid);
                         return true;
                     } else {
@@ -422,16 +431,20 @@ namespace perf_boost {
                         resolvedPlayer.guid = unitGuid;
                         resolvedPlayer.resolved = true;
                         neverRenderResolvedPlayers.push_back(resolvedPlayer);
-                        
+
                         // Remove from neverRenderPlayersToCheck and neverRenderUnresolvedPlayers
                         neverRenderPlayersToCheck.erase(it);
-                        auto unresolvedIt = std::find_if(neverRenderUnresolvedPlayers.begin(), neverRenderUnresolvedPlayers.end(),
-                            [&](const AlwaysRenderPlayer& p) { return strcmp(p.name, unitName) == 0; });
+                        auto unresolvedIt = std::find_if(neverRenderUnresolvedPlayers.begin(),
+                                                         neverRenderUnresolvedPlayers.end(),
+                                                         [&](const AlwaysRenderPlayer &p) {
+                                                             return strcmp(p.name, unitName) == 0;
+                                                         });
                         if (unresolvedIt != neverRenderUnresolvedPlayers.end()) {
                             neverRenderUnresolvedPlayers.erase(unresolvedIt);
                         }
-                        
-                        DEBUG_LOG("Resolved never-render player " << unitName << " with GUID: " << std::hex << unitGuid);
+
+                        DEBUG_LOG(
+                                "Resolved never-render player " << unitName << " with GUID: " << std::hex << unitGuid);
                         return true; // Found in blacklist, never render
                     } else {
                         ++it;
@@ -459,16 +472,20 @@ namespace perf_boost {
 
         // Every 60 seconds: move unresolved players to alwaysRenderPlayersToCheck if there are any
         if (gPlayerUnit && !unresolvedPlayers.empty() && (currentTime - lastOfflineCheckTime) > 60000) {
-            alwaysRenderPlayersToCheck.insert(alwaysRenderPlayersToCheck.end(), unresolvedPlayers.begin(), unresolvedPlayers.end());
+            alwaysRenderPlayersToCheck.insert(alwaysRenderPlayersToCheck.end(), unresolvedPlayers.begin(),
+                                              unresolvedPlayers.end());
             DEBUG_LOG("Moved " << unresolvedPlayers.size() << " unresolved players to alwaysRenderPlayersToCheck");
             unresolvedPlayers.clear();
             lastOfflineCheckTime = currentTime;
         }
 
         // Every 60 seconds: move neverRender unresolved players to neverRenderPlayersToCheck if there are any
-        if (gPlayerUnit && !neverRenderUnresolvedPlayers.empty() && (currentTime - neverRenderLastOfflineCheckTime) > 60000) {
-            neverRenderPlayersToCheck.insert(neverRenderPlayersToCheck.end(), neverRenderUnresolvedPlayers.begin(), neverRenderUnresolvedPlayers.end());
-            DEBUG_LOG("Moved " << neverRenderUnresolvedPlayers.size() << " neverRender unresolved players to neverRenderPlayersToCheck");
+        if (gPlayerUnit && !neverRenderUnresolvedPlayers.empty() &&
+            (currentTime - neverRenderLastOfflineCheckTime) > 60000) {
+            neverRenderPlayersToCheck.insert(neverRenderPlayersToCheck.end(), neverRenderUnresolvedPlayers.begin(),
+                                             neverRenderUnresolvedPlayers.end());
+            DEBUG_LOG("Moved " << neverRenderUnresolvedPlayers.size()
+                               << " neverRender unresolved players to neverRenderPlayersToCheck");
             neverRenderUnresolvedPlayers.clear();
             neverRenderLastOfflineCheckTime = currentTime;
         }
@@ -478,15 +495,18 @@ namespace perf_boost {
 
         if (!alwaysRenderPlayersToCheck.empty()) {
             // move any remaining players from alwaysRenderPlayersToCheck back to unresolvedPlayers
-            unresolvedPlayers.insert(unresolvedPlayers.end(), alwaysRenderPlayersToCheck.begin(), alwaysRenderPlayersToCheck.end());
+            unresolvedPlayers.insert(unresolvedPlayers.end(), alwaysRenderPlayersToCheck.begin(),
+                                     alwaysRenderPlayersToCheck.end());
             DEBUG_LOG("Moved " << alwaysRenderPlayersToCheck.size() << " players back to unresolvedPlayers");
             alwaysRenderPlayersToCheck.clear();
         }
 
         if (!neverRenderPlayersToCheck.empty()) {
             // move any remaining neverRender players from neverRenderPlayersToCheck back to neverRenderUnresolvedPlayers
-            neverRenderUnresolvedPlayers.insert(neverRenderUnresolvedPlayers.end(), neverRenderPlayersToCheck.begin(), neverRenderPlayersToCheck.end());
-            DEBUG_LOG("Moved " << neverRenderPlayersToCheck.size() << " neverRender players back to neverRenderUnresolvedPlayers");
+            neverRenderUnresolvedPlayers.insert(neverRenderUnresolvedPlayers.end(), neverRenderPlayersToCheck.begin(),
+                                                neverRenderPlayersToCheck.end());
+            DEBUG_LOG("Moved " << neverRenderPlayersToCheck.size()
+                               << " neverRender players back to neverRenderUnresolvedPlayers");
             neverRenderPlayersToCheck.clear();
         }
     }
@@ -551,6 +571,9 @@ namespace perf_boost {
             if (unitPtr != gPlayerUnit) {
                 auto unitType = UnitGetType(unitPtr);
                 if (unitType == OBJECT_TYPE_PLAYER) {
+                    if (hideAllPlayers) {
+                        return 0; // Hide all players
+                    }
                     auto unitGuid = UnitGetGuid(unitPtr);
                     if (alwaysRenderRaidMarks) {
                         auto raidMark = GetRaidMarkForGuid(unitGuid);
@@ -603,9 +626,24 @@ namespace perf_boost {
                     } else {
                         // Check if it's a pet (controlled by player)
                         if (UnitIsControlledByPlayer(unitPtr)) {
-                            int renderDist = (gPlayerInCombat && petRenderDistInCombat != -1) ? petRenderDistInCombat
-                                                                                              : petRenderDist;
-                            return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+                            auto *unitFields = *reinterpret_cast<UnitFields **>(unitPtr + 68);
+
+                            // always show your own summons
+                            if(unitFields->summonedBy != ClntObjMgrGetActivePlayerGuid()) {
+                                if (unitFields->petNameTimestamp > 0){
+                                    // This is a pet with a name
+                                    int renderDist = (gPlayerInCombat && petRenderDistInCombat != -1) ? petRenderDistInCombat
+                                                                                                      : petRenderDist;
+                                    return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+                                } else {
+                                    // This is a summon (player-controlled unit without name)
+                                    if (summonRenderDist != -1) {
+                                        int renderDist = (gPlayerInCombat && summonRenderDistInCombat != -1) ? summonRenderDistInCombat
+                                                                                                             : summonRenderDist;
+                                        return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+                                    }
+                                }
+                            }
                         }
 
                         auto unitLevel = UnitGetLevel(unitPtr);
@@ -640,6 +678,12 @@ namespace perf_boost {
         } else if (strcmp(cvar, "PB_PetRenderDistInCombat") == 0) {
             petRenderDistInCombat = atoi(value);
             DEBUG_LOG("Set PB_PetRenderDistInCombat to " << petRenderDistInCombat);
+        } else if (strcmp(cvar, "PB_SummonRenderDist") == 0) {
+            summonRenderDist = atoi(value);
+            DEBUG_LOG("Set PB_SummonRenderDist to " << summonRenderDist);
+        } else if (strcmp(cvar, "PB_SummonRenderDistInCombat") == 0) {
+            summonRenderDistInCombat = atoi(value);
+            DEBUG_LOG("Set PB_SummonRenderDistInCombat to " << summonRenderDistInCombat);
         } else if (strcmp(cvar, "PB_TrashUnitRenderDist") == 0) {
             trashUnitRenderDist = atoi(value);
             DEBUG_LOG("Set PB_TrashUnitRenderDist to " << trashUnitRenderDist);
@@ -655,6 +699,9 @@ namespace perf_boost {
         } else if (strcmp(cvar, "PB_AlwaysRenderRaidMarks") == 0) {
             alwaysRenderRaidMarks = atoi(value) != 0;
             DEBUG_LOG("Set PB_AlwaysRenderRaidMarks to " << alwaysRenderRaidMarks);
+        } else if (strcmp(cvar, "PB_HideAllPlayers") == 0) {
+            hideAllPlayers = atoi(value) != 0;
+            DEBUG_LOG("Set PB_HideAllPlayers to " << hideAllPlayers);
         } else if (strcmp(cvar, "PB_FilterGuidEvents") == 0) {
             filterGuidEvents = atoi(value) != 0;
             DEBUG_LOG("Set PB_FilterGuidEvents to " << filterGuidEvents);
@@ -693,13 +740,13 @@ namespace perf_boost {
         return nullptr;
     }
 
-    char* getCvarString(const char *cvar) {
+    char *getCvarString(const char *cvar) {
         auto const cvarLookup = hadesmem::detail::AliasCast<CVarLookupT>(Offsets::CVarLookup);
         uintptr_t *cvarPtr = cvarLookup(cvar);
 
         if (cvarPtr) {
             // Get strValue from CVar
-            char **strValuePtr = reinterpret_cast<char**>(cvarPtr + 8);
+            char **strValuePtr = reinterpret_cast<char **>(cvarPtr + 8);
             return *strValuePtr;
         }
         return nullptr;
@@ -708,7 +755,7 @@ namespace perf_boost {
     void loadUserVar(const char *cvar) {
         // Handle string cvars specially
         if (strcmp(cvar, "PB_AlwaysRenderPlayers") == 0 || strcmp(cvar, "PB_NeverRenderPlayers") == 0) {
-            char* stringValue = getCvarString(cvar);
+            char *stringValue = getCvarString(cvar);
             if (stringValue) {
                 updateFromCvar(cvar, stringValue);
             } else {
@@ -774,6 +821,7 @@ namespace perf_boost {
 
 
         char defaultEnabled[] = "1";
+        char defaultDisabled[] = "0";
 
         // Enable/disable all performance boost features
         char PB_Enabled[] = "PB_Enabled";
@@ -841,6 +889,28 @@ namespace perf_boost {
                      0,  // unk2
                      0); // unk3
 
+        // Max distance to render summons when not in combat
+        char PB_SummonRenderDist[] = "PB_SummonRenderDist";
+        CVarRegister(PB_SummonRenderDist, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultUnset, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Max distance to render summons when in combat
+        char PB_SummonRenderDistInCombat[] = "PB_SummonRenderDistInCombat";
+        CVarRegister(PB_SummonRenderDistInCombat, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultUnset, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
         // Max distance to render trash units when not in combat
         char PB_TrashUnitRenderDist[] = "PB_TrashUnitRenderDist";
         CVarRegister(PB_TrashUnitRenderDist, // name
@@ -880,6 +950,17 @@ namespace perf_boost {
                      nullptr, // help
                      0,  // unk1
                      defaultEnabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Whether to hide all players
+        char PB_HideAllPlayers[] = "PB_HideAllPlayers";
+        CVarRegister(PB_HideAllPlayers, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultDisabled, // default value address
                      nullptr, // callback
                      5, // category
                      0,  // unk2
@@ -925,11 +1006,14 @@ namespace perf_boost {
         loadUserVar("PB_PlayerRenderDistInCombat");
         loadUserVar("PB_PetRenderDist");
         loadUserVar("PB_PetRenderDistInCombat");
+        loadUserVar("PB_SummonRenderDist");
+        loadUserVar("PB_SummonRenderDistInCombat");
         loadUserVar("PB_TrashUnitRenderDist");
         loadUserVar("PB_TrashUnitRenderDistInCombat");
         loadUserVar("PB_CorpseRenderDist");
         loadUserVar("PB_Enabled");
         loadUserVar("PB_AlwaysRenderRaidMarks");
+        loadUserVar("PB_HideAllPlayers");
         loadUserVar("PB_FilterGuidEvents");
         loadUserVar("PB_AlwaysRenderPlayers");
         loadUserVar("PB_NeverRenderPlayers");

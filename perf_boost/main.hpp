@@ -58,6 +58,123 @@ namespace perf_boost {
        NUM_OBJECT_TYPES = 0xA,
      };
 
+    enum UnitFlags
+    {
+        UNIT_FLAG_NONE                  = 0x00000000,
+        UNIT_FLAG_UNK_0                 = 0x00000001,           // Movement checks disabled, likely paired with loss of client control packet.
+        UNIT_FLAG_SPAWNING              = 0x00000002,           // not attackable
+        UNIT_FLAG_DISABLE_MOVE          = 0x00000004,
+        UNIT_FLAG_PLAYER_CONTROLLED     = 0x00000008,           // players, pets, totems, guardians, companions, charms, any units associated with players
+        UNIT_FLAG_PET_RENAME            = 0x00000010,           // Old pet rename: moved to UNIT_FIELD_BYTES_2,2 in TBC+
+        UNIT_FLAG_PET_ABANDON           = 0x00000020,           // Old pet abandon: moved to UNIT_FIELD_BYTES_2,2 in TBC+
+        UNIT_FLAG_UNK_6                 = 0x00000040,
+        UNIT_FLAG_IMMUNE_TO_PLAYER      = 0x00000100,           // Target is immune to players
+        UNIT_FLAG_IMMUNE_TO_NPC         = 0x00000200,           // Target is immune to creatures
+        UNIT_FLAG_PVP                   = 0x00001000,
+        UNIT_FLAG_SILENCED              = 0x00002000,           // silenced, 2.1.1
+        UNIT_FLAG_UNK_14                = 0x00004000,
+        UNIT_FLAG_USE_SWIM_ANIMATION    = 0x00008000,
+        UNIT_FLAG_NON_ATTACKABLE_2      = 0x00010000,           // removes attackable icon, if on yourself, cannot assist self but can cast TARGET_UNIT_CASTER spells - added by SPELL_AURA_MOD_UNATTACKABLE
+        UNIT_FLAG_PACIFIED              = 0x00020000,
+        UNIT_FLAG_STUNNED               = 0x00040000,           // Unit is a subject to stun, turn and strafe movement disabled
+        UNIT_FLAG_IN_COMBAT             = 0x00080000,
+        UNIT_FLAG_TAXI_FLIGHT           = 0x00100000,           // Unit is on taxi, paired with a duplicate loss of client control packet (likely a legacy serverside hack). Disables any spellcasts not allowed in taxi flight client-side.
+        UNIT_FLAG_CONFUSED              = 0x00400000,           // Unit is a subject to confused movement, movement checks disabled, paired with loss of client control packet.
+        UNIT_FLAG_FLEEING               = 0x00800000,           // Unit is a subject to fleeing movement, movement checks disabled, paired with loss of client control packet.
+        UNIT_FLAG_POSSESSED             = 0x01000000,           // Unit is under remote control by another unit, movement checks disabled, paired with loss of client control packet. New master is allowed to use melee attack and can't select this unit via mouse in the world (as if it was own character).
+        UNIT_FLAG_NOT_SELECTABLE        = 0x02000000,
+        UNIT_FLAG_SKINNABLE             = 0x04000000,
+        UNIT_FLAG_AURAS_VISIBLE         = 0x08000000,           // magic detect
+        UNIT_FLAG_SHEATHE               = 0x40000000,
+        UNIT_FLAG_IMMUNE                = 0x80000000,           // Immune to damage
+
+        // [-ZERO] TBC enumerations [?]
+        UNIT_FLAG_NOT_ATTACKABLE_1      = 0x00000080,           // ?? (UNIT_FLAG_PLAYER_CONTROLLED | UNIT_FLAG_NOT_ATTACKABLE_1) is NON_PVP_ATTACKABLE
+        UNIT_FLAG_LOOTING               = 0x00000400,           // loot animation
+        UNIT_FLAG_PET_IN_COMBAT         = 0x00000800,           // in combat?, 2.0.8
+        UNIT_FLAG_DISARMED              = 0x00200000,           // disable melee spells casting..., "Required melee weapon" added to melee spells tooltip.
+
+        UNIT_FLAG_UNK_28                = 0x10000000,
+        UNIT_FLAG_UNK_29                = 0x20000000,           // used in Feing Death spell
+    };
+
+    typedef struct UnitFields {
+        uint64_t charm;                          // Size:2
+        uint64_t summon;                         // Size:2
+        uint64_t charmedBy;                      // Size:2
+        uint64_t summonedBy;                     // Size:2
+        uint64_t createdBy;                      // Size:2
+        uint64_t target;                         // Size:2
+        uint64_t persuaded;                      // Size:2
+        uint64_t channelObject;                  // Size:2
+        uint32_t health;                         // Size:1
+        uint32_t power1;                         // Size:1
+        uint32_t power2;                         // Size:1
+        uint32_t power3;                         // Size:1
+        uint32_t power4;                         // Size:1
+        uint32_t power5;                         // Size:1
+        uint32_t maxHealth;                      // Size:1
+        uint32_t maxPower1;                      // Size:1
+        uint32_t maxPower2;                      // Size:1
+        uint32_t maxPower3;                      // Size:1
+        uint32_t maxPower4;                      // Size:1
+        uint32_t maxPower5;                      // Size:1
+        uint32_t level;                          // Size:1
+        uint32_t factionTemplate;                // Size:1
+        uint32_t bytes0;                         // Size:1
+        uint32_t virtualItemDisplay[3];          // Size:3
+        uint32_t virtualItemInfo[6];             // Size:6
+        uint32_t flags;                          // Size:1
+        uint32_t aura[48];                       // Size:48
+        uint32_t auraFlags[6];                   // Size:6
+        uint32_t auraLevels[12];                 // Size:12
+        uint32_t auraApplications[12];           // Size:12
+        uint32_t auraState;                      // Size:1
+        uint32_t baseAttackTime;                 // Size:1
+        uint32_t offhandAttackTime;              // Size:1
+        uint32_t rangedAttackTime;               // Size:1
+        float boundingRadius;                    // Size:1
+        float combatReach;                       // Size:1
+        uint32_t displayId;                      // Size:1
+        uint32_t nativeDisplayId;                // Size:1
+        uint32_t mountDisplayId;                 // Size:1
+        float minDamage;                         // Size:1
+        float maxDamage;                         // Size:1
+        float minOffhandDamage;                  // Size:1
+        float maxOffhandDamage;                  // Size:1
+        uint32_t bytes1;                         // Size:1
+        uint32_t petNumber;                      // Size:1
+        uint32_t petNameTimestamp;               // Size:1
+        uint32_t petExperience;                  // Size:1
+        uint32_t petNextLevelExp;                // Size:1
+        uint32_t dynamicFlags;                   // Size:1
+        uint32_t channelSpell;                   // Size:1
+        float modCastSpeed;                      // Size:1 (Float in 1.12+)
+        uint32_t createdBySpell;                 // Size:1
+        uint32_t npcFlags;                       // Size:1
+        uint32_t npcEmoteState;                  // Size:1
+        uint32_t trainingPoints;                 // Size:1
+        uint32_t stat0;                          // Size:1
+        uint32_t stat1;                          // Size:1
+        uint32_t stat2;                          // Size:1
+        uint32_t stat3;                          // Size:1
+        uint32_t stat4;                          // Size:1
+        uint32_t resistances[7];                 // Size:7
+        uint32_t baseMana;                       // Size:1
+        uint32_t baseHealth;                     // Size:1
+        uint32_t bytes2;                         // Size:1
+        uint32_t attackPower;                    // Size:1
+        uint32_t attackPowerMods;                // Size:1
+        float attackPowerMultiplier;             // Size:1
+        uint32_t rangedAttackPower;              // Size:1
+        uint32_t rangedAttackPowerMods;          // Size:1
+        float rangedAttackPowerMultiplier;       // Size:1
+        float minRangedDamage;                   // Size:1
+        float maxRangedDamage;                   // Size:1
+        float powerCostModifier[7];              // Size:7
+        float powerCostMultiplier[7];            // Size:7
+    } UnitFields;
+
     using ClntObjMgrObjectPtrT = uintptr_t* (__fastcall *)(OBJECT_TYPE_MASK typeMask, const char *debugMessage, unsigned __int64 guid, int debugCode);
 
     using ISceneEndT = int *(__fastcall *)(uintptr_t *unk);
