@@ -40,6 +40,9 @@ enum class Offsets : std::uint32_t {
     GetUnitFromName = 0x00515940,
     GetGUIDFromName = 0x00515970,
 
+    Language = 0xC0E080,
+    SpellDb = 0xC0D780,
+
     SpellVisualsInitialize = 0X006EC0E0,
     OnWorldRender = 0x00483460,
 
@@ -63,13 +66,20 @@ enum class Offsets : std::uint32_t {
     lua_getgccount = 0x006f43f0,
 
     CM2ModelAnimateMT = 0x00714260,
+    CM2ModelSetAnimating = 0X00710B90,
     ObjectFree = 0X00463B00,
+
+    GetSpellVisual = 0X006EC1E0,
+    ObjectVisKitProc = 0x005d55c0,
 
     CGUnitPreAnimate = 0x00607ed0,
     CGUnitAnimate = 0x00608560,
     CGUnitShouldRender = 0x00607da0,
     CGUnitGetUnitName = 0x00609210,
     CGUnitCanAttack = 0x0000606980,
+    CGUnitPlaySpellVisual = 0X0060EDF0,
+    CGUnitPlayChannelVisual = 0x00612a30,
+    CGUnitGetAppropriateSpellVisual = 0X0060D450,
 
     CGCorpseShouldRender = 0x005d67e0,
 
@@ -85,4 +95,7 @@ enum class Offsets : std::uint32_t {
 
     RealZoneText = 0X0B4B404,
     ZoneAreaIds = 0X0B4E314,
+
+    CGDynamicObjectGetVisualEffectNameRec = 0x005d57c0,
+    CGDynamicObjectUpdateModelLoadStatus = 0x005d52f0,
 };

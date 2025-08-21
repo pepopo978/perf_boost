@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char *VERSION = "1.2.0";
+    const char *VERSION = "1.3.0";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -77,15 +77,26 @@ namespace perf_boost {
     bool hideAllPlayers;
     bool filterGuidEvents;
 
-    std::vector<AlwaysRenderPlayer> unresolvedPlayers;
-    std::vector<AlwaysRenderPlayer> alwaysRenderPlayersToCheck;
-    std::vector<AlwaysRenderPlayer> resolvedPlayers;
+    bool showPlayerSpellVisuals;
+    bool showPlayerGroundEffects;
+    bool showPlayerAuraVisuals;
+    bool showUnitAuraVisuals;
+    bool hideSpellsForHiddenPlayers;
+
+    std::string hiddenSpellIdsString;
+    std::vector<uint32_t> hiddenSpellIds;
+    std::string alwaysShownSpellIdsString;
+    std::vector<uint32_t> alwaysShownSpellIds;
+
+    std::vector<PlayerData> unresolvedPlayers;
+    std::vector<PlayerData> alwaysRenderPlayersToCheck;
+    std::vector<PlayerData> resolvedPlayers;
     std::string alwaysRenderPlayersString;
     uint64_t lastOfflineCheckTime = 0;
 
-    std::vector<AlwaysRenderPlayer> neverRenderUnresolvedPlayers;
-    std::vector<AlwaysRenderPlayer> neverRenderPlayersToCheck;
-    std::vector<AlwaysRenderPlayer> neverRenderResolvedPlayers;
+    std::vector<PlayerData> neverRenderUnresolvedPlayers;
+    std::vector<PlayerData> neverRenderPlayersToCheck;
+    std::vector<PlayerData> neverRenderResolvedPlayers;
     std::string neverRenderPlayersString;
     uint64_t neverRenderLastOfflineCheckTime = 0;
 
@@ -307,6 +318,50 @@ namespace perf_boost {
         return clntObjMgrObjectPtr(typeMask, nullptr, guid, 0);
     }
 
+    void parseHiddenSpellIds(const std::string &spellIdString) {
+        hiddenSpellIds.clear();
+        if (spellIdString.empty()) {
+            return;
+        }
+
+        std::stringstream ss(spellIdString);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1); // rtrim
+            item.erase(0, item.find_first_not_of(" \t\n\r\f\v")); // ltrim
+            if (!item.empty()) {
+                try {
+                    uint32_t spellId = std::stoul(item);
+                    hiddenSpellIds.push_back(spellId);
+                } catch (const std::exception &e) {
+                    DEBUG_LOG("Invalid spell ID in HiddenSpellIds: " << item);
+                }
+            }
+        }
+    }
+
+    void parseAlwaysShownSpellIds(const std::string &spellIdString) {
+        alwaysShownSpellIds.clear();
+        if (spellIdString.empty()) {
+            return;
+        }
+
+        std::stringstream ss(spellIdString);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1); // rtrim
+            item.erase(0, item.find_first_not_of(" \t\n\r\f\v")); // ltrim
+            if (!item.empty()) {
+                try {
+                    uint32_t spellId = std::stoul(item);
+                    alwaysShownSpellIds.push_back(spellId);
+                } catch (const std::exception &e) {
+                    DEBUG_LOG("Invalid spell ID in AlwaysShownSpellIds: " << item);
+                }
+            }
+        }
+    }
+
     char *UnitGetName(uintptr_t *unit) {
         if (!unit) {
             return nullptr;
@@ -384,7 +439,7 @@ namespace perf_boost {
                 while (it != alwaysRenderPlayersToCheck.end()) {
                     if (strcmp(it->name, unitName) == 0) {
                         // Found match, move to resolved players
-                        AlwaysRenderPlayer resolvedPlayer = *it;
+                        PlayerData resolvedPlayer = *it;
                         resolvedPlayer.guid = unitGuid;
                         resolvedPlayer.resolved = true;
                         resolvedPlayers.push_back(resolvedPlayer);
@@ -392,7 +447,7 @@ namespace perf_boost {
                         // Remove from alwaysRenderPlayersToCheck and unresolvedPlayers
                         alwaysRenderPlayersToCheck.erase(it);
                         auto unresolvedIt = std::find_if(unresolvedPlayers.begin(), unresolvedPlayers.end(),
-                                                         [&](const AlwaysRenderPlayer &p) {
+                                                         [&](const PlayerData &p) {
                                                              return strcmp(p.name, unitName) == 0;
                                                          });
                         if (unresolvedIt != unresolvedPlayers.end()) {
@@ -427,7 +482,7 @@ namespace perf_boost {
                 while (it != neverRenderPlayersToCheck.end()) {
                     if (strcmp(it->name, unitName) == 0) {
                         // Found match, move to resolved players
-                        AlwaysRenderPlayer resolvedPlayer = *it;
+                        PlayerData resolvedPlayer = *it;
                         resolvedPlayer.guid = unitGuid;
                         resolvedPlayer.resolved = true;
                         neverRenderResolvedPlayers.push_back(resolvedPlayer);
@@ -436,7 +491,7 @@ namespace perf_boost {
                         neverRenderPlayersToCheck.erase(it);
                         auto unresolvedIt = std::find_if(neverRenderUnresolvedPlayers.begin(),
                                                          neverRenderUnresolvedPlayers.end(),
-                                                         [&](const AlwaysRenderPlayer &p) {
+                                                         [&](const PlayerData &p) {
                                                              return strcmp(p.name, unitName) == 0;
                                                          });
                         if (unresolvedIt != neverRenderUnresolvedPlayers.end()) {
@@ -511,16 +566,6 @@ namespace perf_boost {
         }
     }
 
-    void CGUnitPreAnimateHook(hadesmem::PatchDetourBase *detour, uintptr_t *this_ptr, void *dummy_edx, void *param_1) {
-        auto const CGUnitPreAnimate = detour->GetTrampolineT<CGUnitPreAnimateT>();
-        CGUnitPreAnimate(this_ptr, dummy_edx, param_1);
-    }
-
-    void CGUnitAnimateHook(hadesmem::PatchDetourBase *detour, uintptr_t *this_ptr, void *dummy_edx, int *param_3) {
-        auto const CGUnitAnimate = detour->GetTrampolineT<CGUnitAnimateT>();
-        CGUnitAnimate(this_ptr, dummy_edx, param_3);
-    }
-
     bool ShouldRenderBasedOnDistance(uintptr_t *this_ptr, int renderDist) {
         if (renderDist == 0) {
             return false; // if dist 0 immediately return false
@@ -529,6 +574,335 @@ namespace perf_boost {
             return distance < renderDist;
         }
         return true; // default to true if renderDist is negative
+    }
+
+
+    uint32_t shouldRenderPlayer(uintptr_t *unitPtr) {
+        if (hideAllPlayers) {
+            return 0; // Hide all players
+        }
+        auto unitGuid = UnitGetGuid(unitPtr);
+        if (alwaysRenderRaidMarks) {
+            auto raidMark = GetRaidMarkForGuid(unitGuid);
+
+            if (raidMark > 0) {
+                // always render players with raid marks
+                return 1;
+            }
+        }
+
+        // check if this player is in NeverRenderPlayers blacklist
+        if (shouldNeverRenderPlayer(unitPtr, unitGuid)) {
+            return 0; // Force hide this player
+        }
+
+        // always show pvp/mc players
+        if (UnitCanAttackUnit(gPlayerUnit, unitPtr)) {
+            return 1;
+        }
+
+        // check if this player is in AlwaysRenderPlayers list
+        if (shouldAlwaysRenderPlayer(unitPtr, unitGuid)) {
+            return 1;
+        }
+
+        int renderDist;
+        if (gPlayerInCombat && playerRenderDistInCombat != -1) {
+            renderDist = playerRenderDistInCombat;
+        } else if (gPlayerInCity && playerRenderDistInCities != -1) {
+            renderDist = playerRenderDistInCities;
+        } else {
+            renderDist = playerRenderDist;
+        }
+        return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+    }
+
+    uint32_t shouldRenderUnit(uintptr_t *unitPtr) {
+        if (alwaysRenderRaidMarks) {
+            auto raidMark = GetRaidMarkForGuid(UnitGetGuid(unitPtr));
+
+            if (raidMark > 0) {
+                // always render raid marks
+                return 1;
+            }
+        }
+
+        auto isDead = UnitIsDead(unitPtr);
+        if (isDead && corpseRenderDist != -1) {
+            // some corpses (lootable ones?) are dead units
+            int renderDist = corpseRenderDist;
+            return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+        } else {
+            // Check if it's a pet (controlled by player)
+            if (UnitIsControlledByPlayer(unitPtr)) {
+                auto *unitFields = *reinterpret_cast<UnitFields **>(unitPtr + 68);
+
+                // always show your own summons
+                if (unitFields->summonedBy != ClntObjMgrGetActivePlayerGuid()) {
+                    if (unitFields->petNameTimestamp > 0) {
+                        // This is a pet with a name
+                        int renderDist = (gPlayerInCombat && petRenderDistInCombat != -1)
+                                         ? petRenderDistInCombat
+                                         : petRenderDist;
+                        return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+                    } else {
+                        // This is a summon (player-controlled unit without name)
+                        if (summonRenderDist != -1) {
+                            int renderDist = (gPlayerInCombat && summonRenderDistInCombat != -1)
+                                             ? summonRenderDistInCombat
+                                             : summonRenderDist;
+                            return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+                        }
+                    }
+                }
+            }
+
+            auto unitLevel = UnitGetLevel(unitPtr);
+            if (unitLevel < 63) {
+                int renderDist = (gPlayerInCombat && trashUnitRenderDistInCombat != -1)
+                                 ? trashUnitRenderDistInCombat : trashUnitRenderDist;
+                return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+            }
+        }
+
+        return 1; // Default to rendering the unit
+    }
+
+    uint32_t shouldRenderCorpse(uintptr_t *unitPtr) {
+        int renderDist = corpseRenderDist;
+        return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+    }
+
+    const SpellRec *GetSpellInfo(uint32_t spellId) {
+        auto const spellDb = reinterpret_cast<WowClientDB<SpellRec> *>(Offsets::SpellDb);
+
+        if (spellId > spellDb->m_maxId)
+            return nullptr;
+
+        return spellDb->m_recordsById[spellId];
+    }
+
+    const char *GetSpellName(uint32_t spellId) {
+        auto const spell = GetSpellInfo(spellId);
+
+        if (!spell || spell->AttributesEx3 & SPELL_ATTR_EX3_NO_CASTING_BAR_TEXT)
+            return "";
+
+        auto const language = *reinterpret_cast<std::uint32_t *>(Offsets::Language);
+
+        return spell->SpellName[language];
+    }
+
+    bool shouldHideSpellForUnit(uintptr_t *unitPtr, const SpellRec *spellRec) {
+        if (!spellRec || !unitPtr) {
+            return false;
+        }
+
+        if (unitPtr != gPlayerUnit && pbEnabled) {
+            // Check if this spell ID should always be shown
+            if (!alwaysShownSpellIds.empty()) {
+                auto it = std::find(alwaysShownSpellIds.begin(), alwaysShownSpellIds.end(), spellRec->Id);
+                if (it != alwaysShownSpellIds.end()) {
+                    return false; // Always show this spell
+                }
+            }
+
+            auto unitType = UnitGetType(unitPtr);
+            if (unitType == OBJECT_TYPE_PLAYER) {
+                // Check if we should show player spells
+                if (!showPlayerSpellVisuals) {
+                    // hide visuals for players other than the player
+                    return true;
+                }
+
+                // Check if we should hide spells for hidden players
+                if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
+                    // hide spells for players that would be hidden
+                    return true;
+                }
+            }
+
+            // Check if this spell ID should be hidden
+            if (!hiddenSpellIds.empty()) {
+                auto it = std::find(hiddenSpellIds.begin(), hiddenSpellIds.end(), spellRec->Id);
+                if (it != hiddenSpellIds.end()) {
+                    return true;
+                }
+            }
+        }
+
+        return false; // Do not hide this spell
+    }
+
+    bool shouldHideGroundEffectForUnit(uintptr_t *unitPtr, const SpellRec *spellRec) {
+        if (!spellRec || !unitPtr) {
+            return false;
+        }
+
+        if (unitPtr != gPlayerUnit && pbEnabled) {
+            // Check if this spell ID should always be shown
+            if (!alwaysShownSpellIds.empty()) {
+                auto it = std::find(alwaysShownSpellIds.begin(), alwaysShownSpellIds.end(), spellRec->Id);
+                if (it != alwaysShownSpellIds.end()) {
+                    return false; // Always show this spell
+                }
+            }
+
+            auto unitType = UnitGetType(unitPtr);
+            if (unitType == OBJECT_TYPE_PLAYER) {
+                // Check if we should show player ground effects
+                if (!showPlayerGroundEffects) {
+                    // hide ground effects for players other than the player
+                    return true;
+                }
+
+                // Check if we should hide spells for hidden players
+                if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
+                    // hide spells for players that would be hidden
+                    return true;
+                }
+            }
+
+            // Check if this spell ID should be hidden
+            if (!hiddenSpellIds.empty()) {
+                auto it = std::find(hiddenSpellIds.begin(), hiddenSpellIds.end(), spellRec->Id);
+                if (it != hiddenSpellIds.end()) {
+                    return true;
+                }
+            }
+        }
+
+        return false; // Do not hide this spell
+    }
+
+    bool shouldHideAuraEffectForUnit(uintptr_t *unitPtr, const SpellRec *spellRec) {
+        if (!spellRec || !unitPtr) {
+            return false;
+        }
+
+        if (unitPtr != gPlayerUnit && pbEnabled) {
+            // Check if this spell ID should always be shown
+            if (!alwaysShownSpellIds.empty()) {
+                auto it = std::find(alwaysShownSpellIds.begin(), alwaysShownSpellIds.end(), spellRec->Id);
+                if (it != alwaysShownSpellIds.end()) {
+                    return false; // Always show this spell
+                }
+            }
+
+            auto unitType = UnitGetType(unitPtr);
+            if (unitType == OBJECT_TYPE_PLAYER) {
+                // Check if we should show player aura visuals
+                if (!showPlayerAuraVisuals) {
+                    return true;
+                }
+
+                // Check if we should hide spells for hidden players
+                if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
+                    // hide spells for players that would be hidden
+                    return true;
+                }
+            } else {
+                // Check if we should show unit aura visuals
+                if (!showUnitAuraVisuals) {
+                    return true;
+                }
+            }
+
+            // Check if this spell ID should be hidden
+            if (!hiddenSpellIds.empty()) {
+                auto it = std::find(hiddenSpellIds.begin(), hiddenSpellIds.end(), spellRec->Id);
+                if (it != hiddenSpellIds.end()) {
+                    return true;
+                }
+            }
+        }
+
+        return false; // Do not hide this spell
+    }
+
+    void
+    CGUnitPlaySpellVisualHook(hadesmem::PatchDetourBase *detour, uintptr_t *unitPtr, void *dummy_edx,
+                              SpellRec *spellRec,
+                              uintptr_t *visualKit, void *param_3, void *param_4) {
+        // get aura visual return address 0X005FF4CB
+        if (reinterpret_cast<int>(detour->GetReturnAddressPtr()) == 0X005FF4CB) {
+            if (shouldHideAuraEffectForUnit(unitPtr, spellRec)) {
+                return;
+            }
+        }
+
+        auto const CGUnitPlaySpellVisual = detour->GetTrampolineT<CGUnitPlaySpellVisualT>();
+        CGUnitPlaySpellVisual(unitPtr, dummy_edx, spellRec, visualKit, param_3, param_4);
+    }
+
+    void
+    CGUnitPlayChannelVisualHook(hadesmem::PatchDetourBase *detour, uintptr_t *unitPtr, void *dummy_edx) {
+        auto *unitFields = *reinterpret_cast<UnitFields **>(unitPtr + 68);
+
+        auto channelSpellId = unitFields->channelSpell;
+        if (channelSpellId > 0) {
+            auto spellRec = GetSpellInfo(channelSpellId);
+            if (shouldHideSpellForUnit(unitPtr, spellRec)) {
+                return; // Hide channel visual if the spell is hidden
+            }
+        }
+
+        auto const CGUnitPlayChannelVisual = detour->GetTrampolineT<CGUnitPlayChannelVisualT>();
+        CGUnitPlayChannelVisual(unitPtr, dummy_edx);
+    }
+
+    uintptr_t *
+    CGUnitGetAppropriateSpellVisualHook(hadesmem::PatchDetourBase *detour, uintptr_t *unitPtr, void *dummy_edx,
+                                        SpellRec *spellRec, uintptr_t *visualKit) {
+        // Don't mess with visuals in GetMissileTargetLocation as it expects it never to be null
+        // GetMissileTargetLocation return address 0x006EC80C
+        if (reinterpret_cast<int>(detour->GetReturnAddressPtr()) != 0x006EC80C) {
+            // spell effect 27 is PERSISTENT_AREA_AURA used by ground effects
+            if ((spellRec->Effect[0] == 27 || spellRec->Effect[1] == 27 || spellRec->Effect[2] == 27) && shouldHideGroundEffectForUnit(unitPtr, spellRec)) {
+                return nullptr; // Return null to hide the visual {
+            } else if (shouldHideSpellForUnit(unitPtr, spellRec)) {
+                return nullptr; // Return null to hide the visual
+            }
+        }
+
+        auto const CGUnitGetAppropriateSpellVisual = detour->GetTrampolineT<CGUnitGetAppropriateSpellVisualT>();
+        return CGUnitGetAppropriateSpellVisual(unitPtr, dummy_edx, spellRec, visualKit);
+    }
+
+    uintptr_t *GetSpellVisualHook(hadesmem::PatchDetourBase *detour, SpellRec *param_1) {
+        DEBUG_LOG(GetSpellName(param_1->Id) << " " << detour->GetReturnAddressPtr());
+        auto const GetSpellVisual = detour->GetTrampolineT<GetSpellVisualT>();
+        return GetSpellVisual(param_1);
+    }
+
+    SpellVisualEffectNameRec *
+    CGDynamicObjectGetVisualEffectNameRecHook(hadesmem::PatchDetourBase *detour, uintptr_t *dynamicObjPtr,
+                                              void *dummy_edx) {
+        auto *dynamicObjectFields = *reinterpret_cast<DynamicObjectFields **>(dynamicObjPtr + 68);
+
+        if (dynamicObjectFields != nullptr) {
+            auto unitPtr = ClntObjMgrObjectPtr(TYPE_MASK_UNIT, dynamicObjectFields->m_caster);
+            if (shouldHideGroundEffectForUnit(unitPtr, GetSpellInfo(dynamicObjectFields->m_spellID))) {
+                return nullptr;
+            }
+        }
+
+        auto const CGDynamicObjectGetVisualEffectNameRec = detour->GetTrampolineT<CGDynamicObjectGetVisualEffectNameRecT>();
+        return CGDynamicObjectGetVisualEffectNameRec(dynamicObjPtr, dummy_edx);
+    }
+
+    void ObjectVisKitProcHook(hadesmem::PatchDetourBase *detour, uintptr_t *dynamicObjPtr) {
+        auto *dynamicObjectFields = *reinterpret_cast<DynamicObjectFields **>(dynamicObjPtr + 68);
+
+        if (dynamicObjectFields != nullptr) {
+            auto unitPtr = ClntObjMgrObjectPtr(TYPE_MASK_UNIT, dynamicObjectFields->m_caster);
+            if (shouldHideGroundEffectForUnit(unitPtr, GetSpellInfo(dynamicObjectFields->m_spellID))) {
+                return;
+            }
+        }
+
+        auto const ObjectVisKitProc = detour->GetTrampolineT<ObjectVisKitProcT>();
+        ObjectVisKitProc(dynamicObjPtr);
     }
 
     void SendUnitSignalHook(hadesmem::PatchDetourBase *detour, uint64_t *guid, uint32_t eventCode) {
@@ -560,6 +934,16 @@ namespace perf_boost {
         }
     }
 
+    void CGUnitPreAnimateHook(hadesmem::PatchDetourBase *detour, uintptr_t *unitPtr, void *dummy_edx, void *param_1) {
+        auto const CGUnitPreAnimate = detour->GetTrampolineT<CGUnitPreAnimateT>();
+        CGUnitPreAnimate(unitPtr, dummy_edx, param_1);
+    }
+
+    void CGUnitAnimateHook(hadesmem::PatchDetourBase *detour, uintptr_t *unitPtr, void *dummy_edx, int *param_3) {
+        auto const CGUnitAnimate = detour->GetTrampolineT<CGUnitAnimateT>();
+        CGUnitAnimate(unitPtr, dummy_edx, param_3);
+    }
+
     uint32_t
     CGUnitShouldRenderHook(hadesmem::PatchDetourBase *detour, uintptr_t *unitPtr, void *dummy_edx, uint32_t param_1) {
         auto const CGUnitShouldRender = detour->GetTrampolineT<CGUnitShouldRenderT>();
@@ -571,91 +955,11 @@ namespace perf_boost {
             if (unitPtr != gPlayerUnit) {
                 auto unitType = UnitGetType(unitPtr);
                 if (unitType == OBJECT_TYPE_PLAYER) {
-                    if (hideAllPlayers) {
-                        return 0; // Hide all players
-                    }
-                    auto unitGuid = UnitGetGuid(unitPtr);
-                    if (alwaysRenderRaidMarks) {
-                        auto raidMark = GetRaidMarkForGuid(unitGuid);
-
-                        if (raidMark > 0) {
-                            // always render players with raid marks
-                            return result;
-                        }
-                    }
-
-                    // check if this player is in NeverRenderPlayers blacklist
-                    if (shouldNeverRenderPlayer(unitPtr, unitGuid)) {
-                        return 0; // Force hide this player
-                    }
-
-                    // always show pvp/mc players
-                    if (UnitCanAttackUnit(gPlayerUnit, unitPtr)) {
-                        return result;
-                    }
-
-                    // check if this player is in AlwaysRenderPlayers list
-                    if (shouldAlwaysRenderPlayer(unitPtr, unitGuid)) {
-                        return result;
-                    }
-
-                    int renderDist;
-                    if (gPlayerInCombat && playerRenderDistInCombat != -1) {
-                        renderDist = playerRenderDistInCombat;
-                    } else if (gPlayerInCity && playerRenderDistInCities != -1) {
-                        renderDist = playerRenderDistInCities;
-                    } else {
-                        renderDist = playerRenderDist;
-                    }
-                    return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+                    return shouldRenderPlayer(unitPtr);
                 } else if (unitType == OBJECT_TYPE_UNIT) {
-                    if (alwaysRenderRaidMarks) {
-                        auto raidMark = GetRaidMarkForGuid(UnitGetGuid(unitPtr));
-
-                        if (raidMark > 0) {
-                            // always render raid marks
-                            return result;
-                        }
-                    }
-
-                    auto isDead = UnitIsDead(unitPtr);
-                    if (isDead && corpseRenderDist != -1) {
-                        // some corpses (lootable ones?) are dead units
-                        int renderDist = corpseRenderDist;
-                        return ShouldRenderBasedOnDistance(unitPtr, renderDist);
-                    } else {
-                        // Check if it's a pet (controlled by player)
-                        if (UnitIsControlledByPlayer(unitPtr)) {
-                            auto *unitFields = *reinterpret_cast<UnitFields **>(unitPtr + 68);
-
-                            // always show your own summons
-                            if(unitFields->summonedBy != ClntObjMgrGetActivePlayerGuid()) {
-                                if (unitFields->petNameTimestamp > 0){
-                                    // This is a pet with a name
-                                    int renderDist = (gPlayerInCombat && petRenderDistInCombat != -1) ? petRenderDistInCombat
-                                                                                                      : petRenderDist;
-                                    return ShouldRenderBasedOnDistance(unitPtr, renderDist);
-                                } else {
-                                    // This is a summon (player-controlled unit without name)
-                                    if (summonRenderDist != -1) {
-                                        int renderDist = (gPlayerInCombat && summonRenderDistInCombat != -1) ? summonRenderDistInCombat
-                                                                                                             : summonRenderDist;
-                                        return ShouldRenderBasedOnDistance(unitPtr, renderDist);
-                                    }
-                                }
-                            }
-                        }
-
-                        auto unitLevel = UnitGetLevel(unitPtr);
-                        if (unitLevel < 63) {
-                            int renderDist = (gPlayerInCombat && trashUnitRenderDistInCombat != -1)
-                                             ? trashUnitRenderDistInCombat : trashUnitRenderDist;
-                            return ShouldRenderBasedOnDistance(unitPtr, renderDist);
-                        }
-                    }
+                    return shouldRenderUnit(unitPtr);
                 } else if (unitType == OBJECT_TYPE_CORPSE && corpseRenderDist != -1) {
-                    int renderDist = corpseRenderDist;
-                    return ShouldRenderBasedOnDistance(unitPtr, renderDist);
+                    return shouldRenderCorpse(unitPtr);
                 }
             }
         }
@@ -709,6 +1013,32 @@ namespace perf_boost {
             parseAlwaysRenderPlayers(value);
         } else if (strcmp(cvar, "PB_NeverRenderPlayers") == 0) {
             parseNeverRenderPlayers(value);
+        } else if (strcmp(cvar, "PB_ShowPlayerSpellVisuals") == 0) {
+            showPlayerSpellVisuals = atoi(value) != 0;
+            DEBUG_LOG("Set PB_ShowPlayerSpellVisuals to " << showPlayerSpellVisuals);
+        } else if (strcmp(cvar, "PB_ShowPlayerGroundEffects") == 0) {
+            showPlayerGroundEffects = atoi(value) != 0;
+            DEBUG_LOG("Set PB_ShowPlayerGroundEffects to " << showPlayerGroundEffects);
+        } else if (strcmp(cvar, "PB_ShowPlayerAuraVisuals") == 0) {
+            showPlayerAuraVisuals = atoi(value) != 0;
+            DEBUG_LOG("Set PB_ShowPlayerAuraVisuals to " << showPlayerAuraVisuals);
+        } else if (strcmp(cvar, "PB_ShowUnitAuraVisuals") == 0) {
+            showUnitAuraVisuals = atoi(value) != 0;
+            DEBUG_LOG("Set PB_ShowUnitAuraVisuals to " << showUnitAuraVisuals);
+        } else if (strcmp(cvar, "PB_HideSpellsForHiddenPlayers") == 0) {
+            hideSpellsForHiddenPlayers = atoi(value) != 0;
+            DEBUG_LOG("Set PB_HideSpellsForHiddenPlayers to " << hideSpellsForHiddenPlayers);
+        } else if (strcmp(cvar, "PB_HiddenSpellIds") == 0) {
+            hiddenSpellIdsString = value;
+            parseHiddenSpellIds(hiddenSpellIdsString);
+            DEBUG_LOG("Set PB_HiddenSpellIds to " << hiddenSpellIdsString << " (parsed " << hiddenSpellIds.size()
+                                                  << " spell IDs)");
+        } else if (strcmp(cvar, "PB_AlwaysShownSpellIds") == 0) {
+            alwaysShownSpellIdsString = value;
+            parseAlwaysShownSpellIds(alwaysShownSpellIdsString);
+            DEBUG_LOG("Set PB_AlwaysShownSpellIds to " << alwaysShownSpellIdsString << " (parsed "
+                                                       << alwaysShownSpellIds.size()
+                                                       << " spell IDs)");
         }
     }
 
@@ -754,7 +1084,8 @@ namespace perf_boost {
 
     void loadUserVar(const char *cvar) {
         // Handle string cvars specially
-        if (strcmp(cvar, "PB_AlwaysRenderPlayers") == 0 || strcmp(cvar, "PB_NeverRenderPlayers") == 0) {
+        if (strcmp(cvar, "PB_AlwaysRenderPlayers") == 0 || strcmp(cvar, "PB_NeverRenderPlayers") == 0 ||
+            strcmp(cvar, "PB_HiddenSpellIds") == 0) {
             char *stringValue = getCvarString(cvar);
             if (stringValue) {
                 updateFromCvar(cvar, stringValue);
@@ -789,9 +1120,30 @@ namespace perf_boost {
         initializeHook<SetCVarT>(process, Offsets::Script_SetCVar, &Script_SetCVarHook);
 
         // Hook CGUnit functions
-        initializeHook<CGUnitPreAnimateT>(process, Offsets::CGUnitPreAnimate, &CGUnitPreAnimateHook);
-        initializeHook<CGUnitAnimateT>(process, Offsets::CGUnitAnimate, &CGUnitAnimateHook);
+//        initializeHook<CGUnitPreAnimateT>(process, Offsets::CGUnitPreAnimate, &CGUnitPreAnimateHook);
+//        initializeHook<CGUnitAnimateT>(process, Offsets::CGUnitAnimate, &CGUnitAnimateHook);
         initializeHook<CGUnitShouldRenderT>(process, Offsets::CGUnitShouldRender, &CGUnitShouldRenderHook);
+
+        // Hook CGUnitPlaySpellVisual
+        initializeHook<CGUnitPlaySpellVisualT>(process, Offsets::CGUnitPlaySpellVisual, &CGUnitPlaySpellVisualHook);
+
+        // Hook CGUnitPlayChannelVisual
+        initializeHook<CGUnitPlayChannelVisualT>(process, Offsets::CGUnitPlayChannelVisual,
+                                                 &CGUnitPlayChannelVisualHook);
+
+        // Hook CGUnitGetAppropriateSpellVisual
+        initializeHook<CGUnitGetAppropriateSpellVisualT>(process, Offsets::CGUnitGetAppropriateSpellVisual,
+                                                         &CGUnitGetAppropriateSpellVisualHook);
+
+        // Hook CGDynamicObjectGetVisualEffectNameRec
+        initializeHook<CGDynamicObjectGetVisualEffectNameRecT>(process, Offsets::CGDynamicObjectGetVisualEffectNameRec,
+                                                               &CGDynamicObjectGetVisualEffectNameRecHook);
+
+        // Hook GetSpellVisual
+//        initializeHook<GetSpellVisualT>(process, Offsets::GetSpellVisual, &GetSpellVisualHook);
+
+        // Hook ObjectVisKitProc
+        initializeHook<ObjectVisKitProcT>(process, Offsets::ObjectVisKitProc, &ObjectVisKitProcHook);
 
         // Hook SendUnitSignal
         initializeHook<SendUnitSignalT>(process, Offsets::SendUnitSignal, &SendUnitSignalHook);
@@ -1000,6 +1352,83 @@ namespace perf_boost {
                      0,  // unk2
                      0); // unk3
 
+        // Show player spell visuals
+        char PB_ShowPlayerSpellVisuals[] = "PB_ShowPlayerSpellVisuals";
+        CVarRegister(PB_ShowPlayerSpellVisuals, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEnabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Show player ground effects
+        char PB_ShowPlayerGroundEffects[] = "PB_ShowPlayerGroundEffects";
+        CVarRegister(PB_ShowPlayerGroundEffects, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEnabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Show player aura visuals
+        char PB_ShowPlayerAuraVisuals[] = "PB_ShowPlayerAuraVisuals";
+        CVarRegister(PB_ShowPlayerAuraVisuals, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEnabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Show unit aura visuals
+        char PB_ShowUnitAuraVisuals[] = "PB_ShowUnitAuraVisuals";
+        CVarRegister(PB_ShowUnitAuraVisuals, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEnabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Hide spells for hidden players
+        char PB_HideSpellsForHiddenPlayers[] = "PB_HideSpellsForHiddenPlayers";
+        CVarRegister(PB_HideSpellsForHiddenPlayers, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEnabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Comma separated list of spell IDs to hide visuals for
+        char PB_HiddenSpellIds[] = "PB_HiddenSpellIds";
+        CVarRegister(PB_HiddenSpellIds, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEmpty, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
+        // Comma separated list of spell IDs to always show visuals for
+        char PB_AlwaysShownSpellIds[] = "PB_AlwaysShownSpellIds";
+        CVarRegister(PB_AlwaysShownSpellIds, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultEmpty, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
 
         loadUserVar("PB_PlayerRenderDist");
         loadUserVar("PB_PlayerRenderDistInCities");
@@ -1017,6 +1446,13 @@ namespace perf_boost {
         loadUserVar("PB_FilterGuidEvents");
         loadUserVar("PB_AlwaysRenderPlayers");
         loadUserVar("PB_NeverRenderPlayers");
+        loadUserVar("PB_ShowPlayerSpellVisuals");
+        loadUserVar("PB_ShowPlayerGroundEffects");
+        loadUserVar("PB_ShowPlayerAuraVisuals");
+        loadUserVar("PB_ShowUnitAuraVisuals");
+        loadUserVar("PB_HideSpellsForHiddenPlayers");
+        loadUserVar("PB_HiddenSpellIds");
+        loadUserVar("PB_AlwaysShownSpellIds");
     }
 
     void SpellVisualsInitializeHook(hadesmem::PatchDetourBase *detour) {

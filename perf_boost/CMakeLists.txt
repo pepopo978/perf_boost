@@ -13,6 +13,7 @@ set(SOURCE_FILES
         main.hpp
         main.cpp
         offsets.hpp
+        types.hpp
 )
 
 add_library(${DLL_NAME} SHARED ${SOURCE_FILES})
