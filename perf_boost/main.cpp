@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char *VERSION = "1.3.0";
+    const char *VERSION = "1.3.1";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -515,7 +515,15 @@ namespace perf_boost {
         // store player data once before ShouldRender is called
         auto playerGuid = ClntObjMgrGetActivePlayerGuid();
         if (playerGuid != 0) {
-            gPlayerUnit = GetObjectPtr(ClntObjMgrGetActivePlayerGuid());
+            gPlayerUnit = nullptr;
+            auto unitPtr = GetObjectPtr(ClntObjMgrGetActivePlayerGuid());
+            if (unitPtr != nullptr) {
+                // check that descriptor fields are loaded
+                auto *unitFields = *reinterpret_cast<UnitFields **>(unitPtr + 68);
+                if (unitFields != nullptr && unitFields->level > 0) {
+                    gPlayerUnit = unitPtr;
+                }
+            }
             if (gPlayerUnit) {
                 gPlayerPosition = UnitGetPosition(gPlayerUnit);
                 gPlayerInCombat = UnitIsInCombat(gPlayerUnit);
@@ -858,7 +866,8 @@ namespace perf_boost {
         // GetMissileTargetLocation return address 0x006EC80C
         if (reinterpret_cast<int>(detour->GetReturnAddressPtr()) != 0x006EC80C) {
             // spell effect 27 is PERSISTENT_AREA_AURA used by ground effects
-            if ((spellRec->Effect[0] == 27 || spellRec->Effect[1] == 27 || spellRec->Effect[2] == 27) && shouldHideGroundEffectForUnit(unitPtr, spellRec)) {
+            if ((spellRec->Effect[0] == 27 || spellRec->Effect[1] == 27 || spellRec->Effect[2] == 27) &&
+                shouldHideGroundEffectForUnit(unitPtr, spellRec)) {
                 return nullptr; // Return null to hide the visual {
             } else if (shouldHideSpellForUnit(unitPtr, spellRec)) {
                 return nullptr; // Return null to hide the visual
