@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char *VERSION = "1.3.2";
+    const char *VERSION = "1.3.3";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -617,9 +617,9 @@ namespace perf_boost {
         }
 
         // always show pvp/mc players
-        if (UnitCanAttackUnit(gPlayerUnit, unitPtr)) {
-            return 1;
-        }
+//        if (UnitCanAttackUnit(gPlayerUnit, unitPtr)) {
+//            return 1;
+//        }
 
         // check if this player is in AlwaysRenderPlayers list
         if (shouldAlwaysRenderPlayer(unitPtr, unitGuid)) {
