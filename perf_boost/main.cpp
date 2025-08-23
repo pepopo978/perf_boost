@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char *VERSION = "1.3.1";
+    const char *VERSION = "1.3.2";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -291,7 +291,19 @@ namespace perf_boost {
     }
 
     bool UnitCanAttackUnit(uintptr_t *unit1, uintptr_t *unit2) {
-        if (!unit1 || !unit2) {
+        if (unit1 == nullptr || unit2 == nullptr) {
+            return false;
+        }
+
+        auto *unit1Fields = *reinterpret_cast<UnitFields **>(unit1 + 68);
+        auto *unit2Fields = *reinterpret_cast<UnitFields **>(unit2 + 68);
+        if (unit1Fields == nullptr || unit2Fields == nullptr) {
+            // not a valid unit
+            return false;
+        }
+
+        if (unit1Fields->level == 0 || unit2Fields->level == 0) {
+            // not a valid unit
             return false;
         }
 
