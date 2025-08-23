@@ -5,6 +5,9 @@ A performance optimization DLL for World of Warcraft 1.12.1 that provides advanc
 # Companion addon
 https://github.com/pepopo978/PerfBoostSettings
 
+there is also a guide there for new users
+https://github.com/pepopo978/PerfBoostSettings/blob/master/GUIDE.md
+
 ## Features
 
 - **Selective Unit Rendering**: Control render distances for different types of units (players, pets, trash mobs, corpses)
