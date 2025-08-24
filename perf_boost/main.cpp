@@ -323,8 +323,6 @@ namespace perf_boost {
             return false;
         }
 
-        DEBUG_LOG(UnitGetName(unit) << " charmedBy: " << std::hex << unitFields->charmedBy);
-
         return unitFields->charmedBy != 0;
     }
 
