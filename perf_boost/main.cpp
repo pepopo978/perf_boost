@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char *VERSION = "1.4.0";
+    const char *VERSION = "1.5.0";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -83,6 +83,7 @@ namespace perf_boost {
     bool showPlayerAuraVisuals;
     bool showUnitAuraVisuals;
     bool hideSpellsForHiddenPlayers;
+    bool applyHiddenSpellIdsToMe;
 
     std::string hiddenSpellIdsString;
     std::vector<uint32_t> hiddenSpellIds;
@@ -754,8 +755,8 @@ namespace perf_boost {
             return false;
         }
 
-        if (unitPtr != gPlayerUnit && pbEnabled) {
-            // Check if this spell ID should always be shown
+        if(pbEnabled) {
+            // Check if this spell ID should always be shown (applies to all units including player)
             if (!alwaysShownSpellIds.empty()) {
                 auto it = std::find(alwaysShownSpellIds.begin(), alwaysShownSpellIds.end(), spellRec->Id);
                 if (it != alwaysShownSpellIds.end()) {
@@ -763,23 +764,25 @@ namespace perf_boost {
                 }
             }
 
-            auto unitType = UnitGetType(unitPtr);
-            if (unitType == OBJECT_TYPE_PLAYER) {
-                // Check if we should show player spells
-                if (!showPlayerSpellVisuals) {
-                    // hide visuals for players other than the player
-                    return true;
-                }
+            if (unitPtr != gPlayerUnit) {
+                auto unitType = UnitGetType(unitPtr);
+                if (unitType == OBJECT_TYPE_PLAYER) {
+                    // Check if we should show player spells
+                    if (!showPlayerSpellVisuals) {
+                        // hide visuals for players other than the player
+                        return true;
+                    }
 
-                // Check if we should hide spells for hidden players
-                if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
-                    // hide spells for players that would be hidden
-                    return true;
+                    // Check if we should hide spells for hidden players
+                    if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
+                        // hide spells for players that would be hidden
+                        return true;
+                    }
                 }
             }
 
-            // Check if this spell ID should be hidden
-            if (!hiddenSpellIds.empty()) {
+            // Check if this spell ID should be hidden (apply to all units or just others based on cvar)
+            if (!hiddenSpellIds.empty() && (unitPtr != gPlayerUnit || applyHiddenSpellIdsToMe)) {
                 auto it = std::find(hiddenSpellIds.begin(), hiddenSpellIds.end(), spellRec->Id);
                 if (it != hiddenSpellIds.end()) {
                     return true;
@@ -795,8 +798,8 @@ namespace perf_boost {
             return false;
         }
 
-        if (unitPtr != gPlayerUnit && pbEnabled) {
-            // Check if this spell ID should always be shown
+        if(pbEnabled) {
+            // Check if this spell ID should always be shown (applies to all units including player)
             if (!alwaysShownSpellIds.empty()) {
                 auto it = std::find(alwaysShownSpellIds.begin(), alwaysShownSpellIds.end(), spellRec->Id);
                 if (it != alwaysShownSpellIds.end()) {
@@ -804,23 +807,25 @@ namespace perf_boost {
                 }
             }
 
-            auto unitType = UnitGetType(unitPtr);
-            if (unitType == OBJECT_TYPE_PLAYER) {
-                // Check if we should show player ground effects
-                if (!showPlayerGroundEffects) {
-                    // hide ground effects for players other than the player
-                    return true;
-                }
+            if (unitPtr != gPlayerUnit) {
+                auto unitType = UnitGetType(unitPtr);
+                if (unitType == OBJECT_TYPE_PLAYER) {
+                    // Check if we should show player ground effects
+                    if (!showPlayerGroundEffects) {
+                        // hide ground effects for players other than the player
+                        return true;
+                    }
 
-                // Check if we should hide spells for hidden players
-                if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
-                    // hide spells for players that would be hidden
-                    return true;
+                    // Check if we should hide spells for hidden players
+                    if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
+                        // hide spells for players that would be hidden
+                        return true;
+                    }
                 }
             }
 
-            // Check if this spell ID should be hidden
-            if (!hiddenSpellIds.empty()) {
+            // Check if this spell ID should be hidden (apply to all units or just others based on cvar)
+            if (!hiddenSpellIds.empty() && (unitPtr != gPlayerUnit || applyHiddenSpellIdsToMe)) {
                 auto it = std::find(hiddenSpellIds.begin(), hiddenSpellIds.end(), spellRec->Id);
                 if (it != hiddenSpellIds.end()) {
                     return true;
@@ -836,8 +841,8 @@ namespace perf_boost {
             return false;
         }
 
-        if (unitPtr != gPlayerUnit && pbEnabled) {
-            // Check if this spell ID should always be shown
+        if(pbEnabled) {
+            // Check if this spell ID should always be shown (applies to all units including player)
             if (!alwaysShownSpellIds.empty()) {
                 auto it = std::find(alwaysShownSpellIds.begin(), alwaysShownSpellIds.end(), spellRec->Id);
                 if (it != alwaysShownSpellIds.end()) {
@@ -845,27 +850,29 @@ namespace perf_boost {
                 }
             }
 
-            auto unitType = UnitGetType(unitPtr);
-            if (unitType == OBJECT_TYPE_PLAYER) {
-                // Check if we should show player aura visuals
-                if (!showPlayerAuraVisuals) {
-                    return true;
-                }
+            if (unitPtr != gPlayerUnit) {
+                auto unitType = UnitGetType(unitPtr);
+                if (unitType == OBJECT_TYPE_PLAYER) {
+                    // Check if we should show player aura visuals
+                    if (!showPlayerAuraVisuals) {
+                        return true;
+                    }
 
-                // Check if we should hide spells for hidden players
-                if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
-                    // hide spells for players that would be hidden
-                    return true;
-                }
-            } else {
-                // Check if we should show unit aura visuals
-                if (!showUnitAuraVisuals) {
-                    return true;
+                    // Check if we should hide spells for hidden players
+                    if (hideSpellsForHiddenPlayers && shouldRenderPlayer(unitPtr) == 0) {
+                        // hide spells for players that would be hidden
+                        return true;
+                    }
+                } else {
+                    // Check if we should show unit aura visuals
+                    if (!showUnitAuraVisuals) {
+                        return true;
+                    }
                 }
             }
 
-            // Check if this spell ID should be hidden
-            if (!hiddenSpellIds.empty()) {
+            // Check if this spell ID should be hidden (apply to all units or just others based on cvar)
+            if (!hiddenSpellIds.empty() && (unitPtr != gPlayerUnit || applyHiddenSpellIdsToMe)) {
                 auto it = std::find(hiddenSpellIds.begin(), hiddenSpellIds.end(), spellRec->Id);
                 if (it != hiddenSpellIds.end()) {
                     return true;
@@ -1088,6 +1095,9 @@ namespace perf_boost {
         } else if (strcmp(cvar, "PB_HideSpellsForHiddenPlayers") == 0) {
             hideSpellsForHiddenPlayers = atoi(value) != 0;
             DEBUG_LOG("Set PB_HideSpellsForHiddenPlayers to " << hideSpellsForHiddenPlayers);
+        } else if (strcmp(cvar, "PB_ApplyHiddenSpellIdsToMe") == 0) {
+            applyHiddenSpellIdsToMe = atoi(value) != 0;
+            DEBUG_LOG("Set PB_ApplyHiddenSpellIdsToMe to " << applyHiddenSpellIdsToMe);
         } else if (strcmp(cvar, "PB_HiddenSpellIds") == 0) {
             hiddenSpellIdsString = value;
             parseHiddenSpellIds(hiddenSpellIdsString);
@@ -1213,11 +1223,16 @@ namespace perf_boost {
         gStartTime = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::high_resolution_clock::now().time_since_epoch()).count());
 
-        // remove/rename previous logs
-        remove("perf_boost.log.3");
-        rename("perf_boost.log.2", "perf_boost.log.3");
-        rename("perf_boost.log.1", "perf_boost.log.2");
-        rename("perf_boost.log", "perf_boost.log.1");
+        // remove/rename previous logs with error handling to prevent crashes
+        try {
+            // remove/rename previous logs
+            remove("perf_boost.log.3");
+            rename("perf_boost.log.2", "perf_boost.log.3");
+            rename("perf_boost.log.1", "perf_boost.log.2");
+            rename("perf_boost.log", "perf_boost.log.1");
+        } catch (...) {
+            // ignore any exceptions during log rotation
+        }
 
         // open new log file
         debugLogFile.open("perf_boost.log");
@@ -1478,6 +1493,17 @@ namespace perf_boost {
                      0,  // unk2
                      0); // unk3
 
+        // Apply hidden spell IDs to player character
+        char PB_ApplyHiddenSpellIdsToMe[] = "PB_ApplyHiddenSpellIdsToMe";
+        CVarRegister(PB_ApplyHiddenSpellIdsToMe, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultDisabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
         // Comma separated list of spell IDs to hide visuals for
         char PB_HiddenSpellIds[] = "PB_HiddenSpellIds";
         CVarRegister(PB_HiddenSpellIds, // name
@@ -1523,6 +1549,7 @@ namespace perf_boost {
         loadUserVar("PB_ShowPlayerAuraVisuals");
         loadUserVar("PB_ShowUnitAuraVisuals");
         loadUserVar("PB_HideSpellsForHiddenPlayers");
+        loadUserVar("PB_ApplyHiddenSpellIdsToMe");
         loadUserVar("PB_HiddenSpellIds");
         loadUserVar("PB_AlwaysShownSpellIds");
     }
