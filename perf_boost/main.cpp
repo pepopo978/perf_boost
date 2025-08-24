@@ -49,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE, uint32_t, void *);
 
 namespace perf_boost {
 
-    const char *VERSION = "1.3.3";
+    const char *VERSION = "1.4.0";
 
     // Dynamic detour storage system
     std::vector<std::unique_ptr<hadesmem::PatchDetourBase>> gDetours;
@@ -74,6 +74,7 @@ namespace perf_boost {
     int trashUnitRenderDistInCombat;
     int corpseRenderDist;
     bool alwaysRenderRaidMarks;
+    bool alwaysRenderPVP;
     bool hideAllPlayers;
     bool filterGuidEvents;
 
@@ -114,6 +115,16 @@ namespace perf_boost {
         typedef uintptr_t *(__fastcall *GETCONTEXT)(void);
         static auto p_GetContext = reinterpret_cast<GETCONTEXT>(Offsets::lua_getcontext);
         return p_GetContext();
+    }
+
+
+    char *UnitGetName(uintptr_t *unit) {
+        if (!unit) {
+            return nullptr;
+        }
+
+        auto const GetUnitName = reinterpret_cast<CGUnitGetNameT>(Offsets::CGUnitGetUnitName);
+        return GetUnitName(unit, 0);
     }
 
     float fastApproxDistance(C3Vector &vec) {
@@ -295,20 +306,41 @@ namespace perf_boost {
             return false;
         }
 
-        auto *unit1Fields = *reinterpret_cast<UnitFields **>(unit1 + 68);
-        auto *unit2Fields = *reinterpret_cast<UnitFields **>(unit2 + 68);
-        if (unit1Fields == nullptr || unit2Fields == nullptr) {
-            // not a valid unit
-            return false;
-        }
-
-        if (unit1Fields->level == 0 || unit2Fields->level == 0) {
-            // not a valid unit
-            return false;
-        }
-
         auto canAttackFn = reinterpret_cast<CGUnitCanAttackT>(Offsets::CGUnitCanAttack);
         return canAttackFn(unit1, unit2);
+    }
+
+    bool UnitIsCharmed(uintptr_t *unit) {
+        if (!unit) {
+            return false;
+        }
+
+        auto *unitFields = *reinterpret_cast<UnitFields **>(unit + 68);
+
+        if (unitFields == nullptr) {
+            // we don't have attribute info.
+            return false;
+        }
+
+        DEBUG_LOG(UnitGetName(unit) << " charmedBy: " << std::hex << unitFields->charmedBy);
+
+        return unitFields->charmedBy != 0;
+    }
+
+    bool UnitIsPvpFlagged(uintptr_t *unit) {
+        if (!unit) {
+            return false;
+        }
+
+        auto *unitFields = *reinterpret_cast<UnitFields **>(unit + 68);
+
+        if (unitFields == nullptr) {
+            // we don't have attribute info.
+            return false;
+        }
+
+        auto flags = unitFields->flags;
+        return (flags & UNIT_FLAG_PVP);
     }
 
     std::uint64_t ClntObjMgrGetActivePlayerGuid() {
@@ -372,15 +404,6 @@ namespace perf_boost {
                 }
             }
         }
-    }
-
-    char *UnitGetName(uintptr_t *unit) {
-        if (!unit) {
-            return nullptr;
-        }
-
-        auto const GetUnitName = reinterpret_cast<CGUnitGetNameT>(Offsets::CGUnitGetUnitName);
-        return GetUnitName(unit, 0);
     }
 
     void parseAlwaysRenderPlayers(const std::string &value) {
@@ -616,10 +639,23 @@ namespace perf_boost {
             return 0; // Force hide this player
         }
 
-        // always show pvp/mc players
-//        if (UnitCanAttackUnit(gPlayerUnit, unitPtr)) {
-//            return 1;
-//        }
+        // always show MC players
+        if (UnitIsCharmed(unitPtr)) {
+            return 1;
+        }
+
+        // always show PvP-flagged players if cvar on
+        if (alwaysRenderPVP && UnitIsPvpFlagged(unitPtr)) {
+            // check if attackable
+            // get fresh unit ptr to avoid issues on loading screens
+            auto playerPtr = GetObjectPtr(ClntObjMgrGetActivePlayerGuid());
+            if (playerPtr){
+                // only show if attackable so we don't show pvp players in group/raid
+                if (UnitCanAttackUnit(playerPtr, unitPtr)) {
+                    return 1;
+                }
+            }
+        }
 
         // check if this player is in AlwaysRenderPlayers list
         if (shouldAlwaysRenderPlayer(unitPtr, unitGuid)) {
@@ -1024,6 +1060,9 @@ namespace perf_boost {
         } else if (strcmp(cvar, "PB_AlwaysRenderRaidMarks") == 0) {
             alwaysRenderRaidMarks = atoi(value) != 0;
             DEBUG_LOG("Set PB_AlwaysRenderRaidMarks to " << alwaysRenderRaidMarks);
+        } else if (strcmp(cvar, "PB_AlwaysRenderPVP") == 0) {
+            alwaysRenderPVP = atoi(value) != 0;
+            DEBUG_LOG("Set PB_AlwaysRenderPVP to " << alwaysRenderPVP);
         } else if (strcmp(cvar, "PB_HideAllPlayers") == 0) {
             hideAllPlayers = atoi(value) != 0;
             DEBUG_LOG("Set PB_HideAllPlayers to " << hideAllPlayers);
@@ -1328,6 +1367,17 @@ namespace perf_boost {
                      0,  // unk2
                      0); // unk3
 
+        // Whether to always render PvP flagged players
+        char PB_AlwaysRenderPVP[] = "PB_AlwaysRenderPVP";
+        CVarRegister(PB_AlwaysRenderPVP, // name
+                     nullptr, // help
+                     0,  // unk1
+                     defaultDisabled, // default value address
+                     nullptr, // callback
+                     5, // category
+                     0,  // unk2
+                     0); // unk3
+
         // Whether to hide all players
         char PB_HideAllPlayers[] = "PB_HideAllPlayers";
         CVarRegister(PB_HideAllPlayers, // name
@@ -1463,6 +1513,7 @@ namespace perf_boost {
         loadUserVar("PB_CorpseRenderDist");
         loadUserVar("PB_Enabled");
         loadUserVar("PB_AlwaysRenderRaidMarks");
+        loadUserVar("PB_AlwaysRenderPVP");
         loadUserVar("PB_HideAllPlayers");
         loadUserVar("PB_FilterGuidEvents");
         loadUserVar("PB_AlwaysRenderPlayers");
